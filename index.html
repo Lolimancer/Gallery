@@ -1,1 +1,573 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8" />
+<title>Virtual Museum</title>
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<style>
+  html, body { margin:0; padding:0; overflow:hidden; height:100%; background:#0a0908; font-family: 'Georgia', 'Times New Roman', serif; }
+  canvas { display:block; }
 
+  #crosshair {
+    position:fixed; top:50%; left:50%; width:6px; height:6px;
+    margin:-3px 0 0 -3px; border-radius:50%;
+    background:rgba(255,255,255,0.85); pointer-events:none; z-index:5;
+    box-shadow:0 0 3px rgba(0,0,0,0.8);
+  }
+
+  #hint {
+    position:fixed; left:50%; bottom:28px; transform:translateX(-50%);
+    color:#e9e2d3; font-size:14px; letter-spacing:0.02em;
+    background:rgba(15,12,10,0.55); padding:8px 16px; border-radius:20px;
+    pointer-events:none; z-index:5; opacity:0; transition:opacity .25s ease;
+  }
+  #hint.show { opacity:1; }
+
+  #caption {
+    position:fixed; left:50%; bottom:60px; transform:translateX(-50%);
+    text-align:center; color:#f3ecdd; z-index:6; pointer-events:none;
+    opacity:0; transition:opacity .35s ease;
+    background:rgba(10,9,8,0.6); padding:14px 26px; border-radius:6px;
+    border:1px solid rgba(230,210,170,0.25);
+    max-width:70vw;
+  }
+  #caption.show { opacity:1; }
+  #caption .t { font-size:20px; letter-spacing:0.03em; margin-bottom:4px; }
+  #caption .s { font-size:13px; color:#c9bfa8; font-style:italic; }
+
+  #overlay {
+    position:fixed; inset:0; background:radial-gradient(circle at 50% 40%, #241d16, #0a0908 75%);
+    display:flex; align-items:center; justify-content:center; flex-direction:column;
+    z-index:20; color:#f3ecdd; text-align:center; cursor:pointer;
+  }
+  #overlay h1 { font-weight:400; letter-spacing:0.12em; font-size:34px; margin:0 0 10px; }
+  #overlay p { color:#c9bfa8; font-size:15px; max-width:480px; line-height:1.6; margin:6px 0; }
+  #overlay .enter {
+    margin-top:22px; padding:12px 34px; border:1px solid rgba(230,210,170,0.5);
+    border-radius:2px; letter-spacing:0.08em; font-size:14px;
+  }
+  #overlay.hidden { display:none; }
+
+  #loading {
+    position:fixed; inset:0; background:#0a0908; z-index:30;
+    display:flex; align-items:center; justify-content:center; color:#c9bfa8;
+    font-size:14px; letter-spacing:0.1em;
+  }
+</style>
+</head>
+<body>
+
+<div id="loading">LOADING GALLERY…</div>
+
+<div id="overlay" class="hidden">
+  <h1>THE GALLERY</h1>
+  <p>Walk through the rooms with <b>W A S D</b> and look around with the mouse.
+     Approach a painting and click it for a closer look - click again (or press Esc) to step back.</p>
+  <div class="enter">CLICK TO ENTER</div>
+</div>
+
+<div id="crosshair"></div>
+<div id="hint">Click to view</div>
+<div id="caption"><div class="t"></div><div class="s"></div></div>
+
+<script type="importmap">
+{
+  "imports": {
+    "three": "https://cdn.jsdelivr.net/npm/three@0.160.0/build/three.module.js",
+    "three/addons/": "https://cdn.jsdelivr.net/npm/three@0.160.0/examples/jsm/"
+  }
+}
+</script>
+
+<script type="module">
+import * as THREE from 'three';
+import { PointerLockControls } from 'three/addons/controls/PointerLockControls.js';
+
+/* ---------------------------------------------------------------------
+   CONFIG — swap artwork by replacing files in ./images/ named
+   img1.jpg, img2.jpg, ... imgN.jpg (any count; they are reused/cycled
+   across the museum). Pictures are exactly 16:9 (landscape) or 9:16
+   (portrait). Landscape files are matched to landscape frames and portrait
+   files to portrait frames; any mismatch is centre-cropped, never stretched.
+--------------------------------------------------------------------- */
+const IMAGE_COUNT = 12;
+const IMAGE_PATH = i => `images/img${((i - 1) % IMAGE_COUNT) + 1}.jpg`;
+const TITLES = ['Hoa Lo','Interior','Chained','Departure',
+                'Inhumane','Artileries','Independence','Strategy',
+                'Communist','Supply Trail','Despair','Victory'];
+const TITLE_FOR = i => TITLES[(i - 1) % TITLES.length];
+
+const WALL_H = 4;
+const WALL_T = 0.3;
+const EYE_H = 1.65;
+const PLAYER_R = 0.35;
+
+/* ---------------------------------------------------------------------
+   SCENE / RENDERER / CAMERA
+--------------------------------------------------------------------- */
+const scene = new THREE.Scene();
+scene.background = new THREE.Color(0x0b0a09);
+scene.fog = new THREE.Fog(0x0b0a09, 18, 48);
+
+const camera = new THREE.PerspectiveCamera(70, window.innerWidth / window.innerHeight, 0.1, 200);
+camera.position.set(0, EYE_H, 3);
+
+const renderer = new THREE.WebGLRenderer({ antialias: true });
+renderer.setPixelRatio(Math.min(window.devicePixelRatio, 2));
+renderer.setSize(window.innerWidth, window.innerHeight);
+renderer.shadowMap.enabled = true;
+renderer.shadowMap.type = THREE.PCFSoftShadowMap;
+renderer.outputColorSpace = THREE.SRGBColorSpace;
+document.body.appendChild(renderer.domElement);
+
+window.addEventListener('resize', () => {
+  camera.aspect = window.innerWidth / window.innerHeight;
+  camera.updateProjectionMatrix();
+  renderer.setSize(window.innerWidth, window.innerHeight);
+});
+
+/* ---------------------------------------------------------------------
+   LIGHTING
+--------------------------------------------------------------------- */
+scene.add(new THREE.HemisphereLight(0x9fa8b8, 0x2a2420, 0.55));
+
+const sun = new THREE.DirectionalLight(0xfff3e0, 0.5);
+sun.position.set(6, 10, 4);
+sun.castShadow = true;
+sun.shadow.mapSize.set(2048, 2048);
+sun.shadow.camera.left = -22; sun.shadow.camera.right = 22;
+sun.shadow.camera.top = 22; sun.shadow.camera.bottom = -22;
+sun.shadow.camera.far = 60;
+scene.add(sun);
+
+/* ---------------------------------------------------------------------
+   MATERIALS
+--------------------------------------------------------------------- */
+const floorMat = new THREE.MeshStandardMaterial({ color: 0x4a3a2c, roughness: 0.85, metalness: 0.05 });
+const ceilMat  = new THREE.MeshStandardMaterial({ color: 0xece6da, roughness: 0.95 });
+const wallMat  = new THREE.MeshStandardMaterial({ color: 0xdcd3c2, roughness: 0.9 });
+const frameMat = new THREE.MeshStandardMaterial({ color: 0x1c140c, roughness: 0.5, metalness: 0.3 });
+
+/* ---------------------------------------------------------------------
+   ROOMS — floors / ceilings (axis-aligned rectangles)
+--------------------------------------------------------------------- */
+const rooms = [
+  { x: [-6, 6],   z: [-5, 5]   }, // Entrance Hall
+  { x: [-6, 6],   z: [-11, -5] }, // North Gallery
+  { x: [6, 14],   z: [-5, 5]   }, // East Gallery
+  { x: [-14, -6], z: [-5, 5]   }, // West Gallery      (new)
+  { x: [-6, 6],   z: [5, 11]   }, // South Gallery     (new)
+  { x: [6, 14],   z: [-11, -5] }, // North-East Room   (new)
+  { x: [-14, -6], z: [-11, -5] }, // North-West Room   (new)
+  { x: [6, 14],   z: [5, 11]   }, // South-East Room   (new)
+  { x: [-14, -6], z: [5, 11]   }, // South-West Room   (new)
+];
+
+for (const r of rooms) {
+  const w = r.x[1] - r.x[0], d = r.z[1] - r.z[0];
+  const cx = (r.x[0] + r.x[1]) / 2, cz = (r.z[0] + r.z[1]) / 2;
+
+  const floor = new THREE.Mesh(new THREE.PlaneGeometry(w, d), floorMat);
+  floor.rotation.x = -Math.PI / 2;
+  floor.position.set(cx, 0, cz);
+  floor.receiveShadow = true;
+  scene.add(floor);
+
+  const ceil = new THREE.Mesh(new THREE.PlaneGeometry(w, d), ceilMat);
+  ceil.rotation.x = Math.PI / 2;
+  ceil.position.set(cx, WALL_H, cz);
+  scene.add(ceil);
+
+  // soft ceiling lamp per room (replaces the old per-painting spotlights)
+  const lamp = new THREE.PointLight(0xfff1d8, 28, 18, 2);
+  lamp.position.set(cx, WALL_H - 0.5, cz);
+  scene.add(lamp);
+}
+
+/* ---------------------------------------------------------------------
+   WALLS — each entry: fixed axis + coordinate, running range, optional gap
+--------------------------------------------------------------------- */
+const wallDefs = [
+  // outer shell, split at every room boundary
+  { axis: 'z', at: 11,  range: [-14, -6] }, { axis: 'z', at: 11,  range: [-6, 6] }, { axis: 'z', at: 11,  range: [6, 14] },
+  { axis: 'z', at: -11, range: [-14, -6] }, { axis: 'z', at: -11, range: [-6, 6] }, { axis: 'z', at: -11, range: [6, 14] },
+  { axis: 'x', at: -14, range: [-11, -5] }, { axis: 'x', at: -14, range: [-5, 5] }, { axis: 'x', at: -14, range: [5, 11] },
+  { axis: 'x', at: 14,  range: [-11, -5] }, { axis: 'x', at: 14,  range: [-5, 5] },  { axis: 'x', at: 14,  range: [5, 11] },
+
+  // partitions running north-south (x = -6 and x = 6)
+  { axis: 'x', at: -6, range: [-11, -5] },
+  { axis: 'x', at: -6, range: [-5, 5],  gap: [-1.5, 1.5] }, // Hall <-> West Gallery
+  { axis: 'x', at: -6, range: [5, 11] },
+  { axis: 'x', at: 6,  range: [-11, -5] },
+  { axis: 'x', at: 6,  range: [-5, 5],  gap: [-1.5, 1.5] }, // Hall <-> East Gallery
+  { axis: 'x', at: 6,  range: [5, 11] },
+
+  // partitions running east-west (z = -5 and z = 5)
+  { axis: 'z', at: -5, range: [-14, -6], gap: [-11.2, -8.8] }, // West Gallery <-> North-West
+  { axis: 'z', at: -5, range: [-6, 6],   gap: [-1.5, 1.5] },   // Hall <-> North Gallery
+  { axis: 'z', at: -5, range: [6, 14],   gap: [8.8, 11.2] },   // East Gallery <-> North-East
+  { axis: 'z', at: 5,  range: [-14, -6], gap: [-11.2, -8.8] }, // West Gallery <-> South-West
+  { axis: 'z', at: 5,  range: [-6, 6],   gap: [-1.5, 1.5] },   // Hall <-> South Gallery
+  { axis: 'z', at: 5,  range: [6, 14],   gap: [8.8, 11.2] },   // East Gallery <-> South-East
+];
+
+const collisionSegments = []; // {x1,z1,x2,z2}
+const wallSegments = [];      // solid wall pieces {axis,at,a,b}, used to hang paintings
+
+function buildWallSegment(axis, at, a, b) {
+  const len = b - a;
+  if (len <= 0.05) return;
+  wallSegments.push({ axis, at, a, b });
+  let w, d, cx, cz;
+  if (axis === 'z') { // runs along x, thin in z
+    w = len; d = WALL_T; cx = (a + b) / 2; cz = at;
+    collisionSegments.push({ x1: a, z1: at, x2: b, z2: at });
+  } else { // axis === 'x', runs along z, thin in x
+    w = WALL_T; d = len; cx = at; cz = (a + b) / 2;
+    collisionSegments.push({ x1: at, z1: a, x2: at, z2: b });
+  }
+  const mesh = new THREE.Mesh(new THREE.BoxGeometry(w, WALL_H, d), wallMat);
+  mesh.position.set(cx, WALL_H / 2, cz);
+  mesh.castShadow = true;
+  mesh.receiveShadow = true;
+  scene.add(mesh);
+}
+
+for (const wdef of wallDefs) {
+  const [a, b] = wdef.range;
+  if (wdef.gap) {
+    buildWallSegment(wdef.axis, wdef.at, a, wdef.gap[0]);
+    buildWallSegment(wdef.axis, wdef.at, wdef.gap[1], b);
+  } else {
+    buildWallSegment(wdef.axis, wdef.at, a, b);
+  }
+}
+
+/* ---------------------------------------------------------------------
+   PAINTINGS — hung automatically on every interior wall face.
+   Every wall piece gets at least one picture; long walls get several.
+   All pictures are exactly 16:9 (landscape) or 9:16 (portrait).
+--------------------------------------------------------------------- */
+const ART_Y = 2.0, FRAME_PAD = 0.14, EDGE = 0.65, MIN_GAP = 0.8;
+const KINDS = {
+  L: { land: true,  h: 1.5 }, // landscape
+  B: { land: true,  h: 1.9 }, // large landscape
+  P: { land: false, h: 2.1 }, // portrait
+  S: { land: false, h: 1.3 }, // small portrait
+};
+const ROTATION = ['L', 'B', 'L', 'P', 'L', 'B', 'L', 'P'];
+const sizeOf = k => { const { land, h } = KINDS[k]; return { land, h, w: land ? h * 16 / 9 : h * 9 / 16 }; };
+const outerW = k => sizeOf(k).w + FRAME_PAD;
+const insideAnyRoom = (x, z) => rooms.some(r => x > r.x[0] && x < r.x[1] && z > r.z[0] && z < r.z[1]);
+
+let rot = 0;
+function pickKinds(len) {
+  const picked = [];
+  let used = 0;
+  for (;;) {
+    const tries = [ROTATION[(rot + picked.length) % ROTATION.length], 'L', 'P', 'S'];
+    const need = k => outerW(k) + (picked.length ? MIN_GAP : 0);
+    const kind = tries.find(k => used + need(k) <= len - 2 * EDGE);
+    if (!kind) break;
+    used += need(kind);
+    picked.push(kind);
+  }
+  rot += Math.max(1, picked.length);
+  return picked;
+}
+
+const paintingDefs = [];
+for (const seg of wallSegments) {
+  const len = seg.b - seg.a, mid = (seg.a + seg.b) / 2;
+  for (const n of [1, -1]) { // both faces of the wall
+    const px = seg.axis === 'z' ? mid : seg.at + n * 0.6;
+    const pz = seg.axis === 'z' ? seg.at + n * 0.6 : mid;
+    if (!insideAnyRoom(px, pz)) continue; // exterior face, nobody sees it
+    const kinds = pickKinds(len);
+    const total = kinds.reduce((sum, k) => sum + outerW(k), 0);
+    const gap = (len - total) / (kinds.length + 1);
+    let t = seg.a + gap;
+    for (const k of kinds) {
+      const { land, w, h } = sizeOf(k);
+      const c = t + outerW(k) / 2;
+      t += outerW(k) + gap;
+      paintingDefs.push(seg.axis === 'z'
+        ? { x: c, y: ART_Y, z: seg.at + n * 0.2, nx: 0, nz: n, w, h, land }
+        : { x: seg.at + n * 0.2, y: ART_Y, z: c, nx: n, nz: 0, w, h, land });
+    }
+  }
+}
+// __END_LAYOUT__
+
+const textureLoader = new THREE.TextureLoader();
+const placeholderCache = {};
+
+function placeholderTexture(index, land) {
+  const key = index + (land ? 'l' : 'p');
+  if (placeholderCache[key]) return placeholderCache[key];
+  const c = document.createElement('canvas');
+  c.width = land ? 1024 : 576; c.height = land ? 576 : 1024;
+  const ctx = c.getContext('2d');
+  const hue = (index * 47) % 360;
+  ctx.fillStyle = `hsl(${hue},35%,72%)`;
+  ctx.fillRect(0, 0, c.width, c.height);
+  ctx.fillStyle = `hsl(${hue},30%,45%)`;
+  ctx.beginPath();
+  ctx.ellipse(c.width * 0.5, c.height * 0.42, c.width * 0.2, c.height * 0.3, 0.4, 0, Math.PI * 2);
+  ctx.fill();
+  ctx.fillStyle = 'rgba(20,16,12,0.85)';
+  ctx.fillRect(0, c.height - 56, c.width, 56);
+  ctx.fillStyle = '#f0e9db';
+  ctx.font = '28px Georgia';
+  ctx.textAlign = 'center';
+  ctx.fillText(TITLE_FOR(index), c.width / 2, c.height - 18);
+  const tex = new THREE.CanvasTexture(c);
+  tex.colorSpace = THREE.SRGBColorSpace;
+  placeholderCache[key] = tex;
+  return tex;
+}
+
+const paintingMeshes = []; // raycast targets, each has userData {title, w, h, land, normal}
+
+paintingDefs.forEach((p, i) => {
+  const index = i + 1; // placeholder colour/title until real images arrive
+  const yaw = Math.atan2(p.nx, p.nz); // rotates default +z-facing plane to (nx,0,nz)
+
+  const group = new THREE.Group();
+  group.position.set(p.x, p.y, p.z);
+  group.rotation.y = yaw;
+
+  const frame = new THREE.Mesh(
+    new THREE.BoxGeometry(p.w + FRAME_PAD, p.h + FRAME_PAD, 0.06),
+    frameMat
+  );
+  frame.position.z = -0.02;
+  frame.castShadow = true;
+  group.add(frame);
+
+  const artMat = new THREE.MeshBasicMaterial({ color: 0xffffff, side: THREE.DoubleSide, map: placeholderTexture(index, p.land) });
+  const art = new THREE.Mesh(new THREE.PlaneGeometry(p.w, p.h), artMat);
+  art.position.z = 0.02;
+  art.userData.isPainting = true;
+  group.add(art);
+  scene.add(group);
+
+  paintingMeshes.push(art);
+  art.userData.title = TITLE_FOR(index);
+  art.userData.land = p.land;
+  art.userData.w = p.w;
+  art.userData.h = p.h;
+  art.userData.normal = new THREE.Vector3(p.nx, 0, p.nz);
+  art.userData.worldPos = new THREE.Vector3(p.x, p.y, p.z);
+});
+
+// Load each image once, then hand out matching-orientation images to frames.
+const loadImage = i => new Promise(resolve => textureLoader.load(
+  IMAGE_PATH(i),
+  tex => {
+    tex.colorSpace = THREE.SRGBColorSpace;
+    console.log('%cLoaded', 'color:#4caf50', IMAGE_PATH(i));
+    resolve({ index: i, tex, land: tex.image.width >= tex.image.height });
+  },
+  undefined,
+  err => { console.warn('Failed to load', IMAGE_PATH(i), err); resolve(null); }
+));
+
+Promise.all(Array.from({ length: IMAGE_COUNT }, (_, k) => loadImage(k + 1))).then(list => {
+  const imgs = list.filter(Boolean);
+  if (!imgs.length) return;
+  const pools = { land: imgs.filter(m => m.land), port: imgs.filter(m => !m.land) };
+  const used = { land: 0, port: 0 };
+  for (const art of paintingMeshes) {
+    const key = art.userData.land ? 'land' : 'port';
+    const pool = pools[key].length ? pools[key] : imgs;
+    const img = pool[used[key]++ % pool.length];
+    const tex = img.tex.clone();
+    // centre-crop to the frame's ratio so nothing is stretched
+    const ia = img.tex.image.width / img.tex.image.height;
+    const pa = art.userData.w / art.userData.h;
+    if (ia > pa) { tex.repeat.x = pa / ia; tex.offset.x = (1 - tex.repeat.x) / 2; }
+    else         { tex.repeat.y = ia / pa; tex.offset.y = (1 - tex.repeat.y) / 2; }
+    tex.needsUpdate = true;
+    art.material.map = tex;
+    art.material.needsUpdate = true;
+    art.userData.title = TITLE_FOR(img.index);
+  }
+});
+
+/* ---------------------------------------------------------------------
+   CONTROLS / MOVEMENT
+--------------------------------------------------------------------- */
+const controls = new PointerLockControls(camera, renderer.domElement);
+scene.add(controls.getObject());
+
+const overlay = document.getElementById('overlay');
+const loading = document.getElementById('loading');
+const hint = document.getElementById('hint');
+const caption = document.getElementById('caption');
+
+loading.style.display = 'none';
+overlay.classList.remove('hidden');
+
+overlay.addEventListener('click', () => {
+  if (!zoomed) controls.lock();
+});
+controls.addEventListener('lock', () => { overlay.classList.add('hidden'); });
+controls.addEventListener('unlock', () => {
+  if (!zoomed) overlay.classList.remove('hidden');
+});
+
+const keys = {};
+document.addEventListener('keydown', (e) => { keys[e.code] = true; });
+document.addEventListener('keyup', (e) => { keys[e.code] = false; });
+
+const velocity = new THREE.Vector3();
+const MOVE_SPEED = 4.2;
+
+function resolveCollision(pos) {
+  for (const seg of collisionSegments) {
+    const sx = seg.x2 - seg.x1, sz = seg.z2 - seg.z1;
+    const len2 = sx * sx + sz * sz || 1;
+    let t = ((pos.x - seg.x1) * sx + (pos.z - seg.z1) * sz) / len2;
+    t = Math.max(0, Math.min(1, t));
+    const cx = seg.x1 + sx * t, cz = seg.z1 + sz * t;
+    const dx = pos.x - cx, dz = pos.z - cz;
+    const dist = Math.hypot(dx, dz);
+    const minDist = PLAYER_R + WALL_T / 2;
+    if (dist < minDist && dist > 0.0001) {
+      const push = (minDist - dist);
+      pos.x += (dx / dist) * push;
+      pos.z += (dz / dist) * push;
+    }
+  }
+  return pos;
+}
+
+/* ---------------------------------------------------------------------
+   PAINTING ZOOM INTERACTION
+--------------------------------------------------------------------- */
+const raycaster = new THREE.Raycaster();
+raycaster.far = 4.2;
+const screenCenter = new THREE.Vector2(0, 0);
+
+let zoomed = false;
+let zoomTarget = null;
+const camReturnPos = new THREE.Vector3();
+const camReturnQuat = new THREE.Quaternion();
+const camStart = new THREE.Vector3();
+const camEnd = new THREE.Vector3();
+const quatStart = new THREE.Quaternion();
+const quatEnd = new THREE.Quaternion();
+let animT = 1; // 1 = animation finished
+const ANIM_TIME = 0.7;
+let animClock = 0;
+
+function tryFocusHovered() {
+  raycaster.setFromCamera(screenCenter, camera);
+  const hits = raycaster.intersectObjects(paintingMeshes, false);
+  if (hits.length) startZoom(hits[0].object);
+}
+
+function startZoom(art) {
+  zoomed = true;
+  zoomTarget = art;
+  controls.unlock ? null : null; // keep pointer lock active for smoothness
+
+  camReturnPos.copy(camera.position);
+  camReturnQuat.copy(camera.quaternion);
+
+  const normal = art.userData.normal;
+  const wp = new THREE.Vector3();
+  art.getWorldPosition(wp);
+  const tanHalf = Math.tan(THREE.MathUtils.degToRad(camera.fov) / 2);
+  const fit = Math.max((art.userData.h / 2) / tanHalf, (art.userData.w / 2) / (tanHalf * camera.aspect));
+  const dist = Math.min(3.6, Math.max(1.3, fit * 1.35));
+  camStart.copy(camera.position);
+  camEnd.copy(wp).addScaledVector(normal, dist);
+  camEnd.y = Math.max(1.2, Math.min(2.6, wp.y));
+
+  quatStart.copy(camera.quaternion);
+  const lookMat = new THREE.Matrix4().lookAt(camEnd, wp, new THREE.Vector3(0, 1, 0));
+  quatEnd.setFromRotationMatrix(lookMat);
+
+  animT = 0; animClock = 0;
+
+  caption.querySelector('.t').textContent = art.userData.title;
+  caption.querySelector('.s').textContent = 'Gallery by Nguyen Trong Dung';
+}
+
+function endZoom() {
+  camStart.copy(camera.position);
+  camEnd.copy(camReturnPos);
+  quatStart.copy(camera.quaternion);
+  quatEnd.copy(camReturnQuat);
+  animT = 0; animClock = 0;
+  zoomed = false;
+  caption.classList.remove('show');
+  zoomTargetPending = null;
+}
+let zoomTargetPending = null;
+
+renderer.domElement.addEventListener('click', () => {
+  if (!controls.isLocked) return;
+  if (zoomed) {
+    endZoom();
+  } else {
+    tryFocusHovered();
+  }
+});
+
+document.addEventListener('keydown', (e) => {
+  if (e.code === 'Escape' && zoomed) endZoom();
+});
+
+/* ---------------------------------------------------------------------
+   MAIN LOOP
+--------------------------------------------------------------------- */
+const clock = new THREE.Clock();
+
+function animate() {
+  requestAnimationFrame(animate);
+  const dt = Math.min(clock.getDelta(), 0.05);
+
+  // hover hint (only when not zoomed & locked)
+  if (controls.isLocked && !zoomed) {
+    raycaster.setFromCamera(screenCenter, camera);
+    const hits = raycaster.intersectObjects(paintingMeshes, false);
+    hint.classList.toggle('show', hits.length > 0);
+  } else {
+    hint.classList.remove('show');
+  }
+
+  if (animT < 1) {
+    animClock += dt;
+    animT = Math.min(1, animClock / ANIM_TIME);
+    const e = 1 - Math.pow(1 - animT, 3); // ease-out cubic
+    camera.position.lerpVectors(camStart, camEnd, e);
+    camera.quaternion.slerpQuaternions(quatStart, quatEnd, e);
+    if (animT >= 1 && zoomed) caption.classList.add('show');
+  } else if (controls.isLocked && !zoomed) {
+    // walking
+    const forward = (keys['KeyW'] || keys['ArrowUp'] ? 1 : 0) - (keys['KeyS'] || keys['ArrowDown'] ? 1 : 0);
+    const strafe = (keys['KeyD'] || keys['ArrowRight'] ? 1 : 0) - (keys['KeyA'] || keys['ArrowLeft'] ? 1 : 0);
+
+    velocity.set(strafe, 0, forward);
+    if (velocity.lengthSq() > 0) velocity.normalize().multiplyScalar(MOVE_SPEED * dt);
+
+    controls.moveRight(velocity.x);
+    controls.moveForward(velocity.z);
+
+    const obj = controls.getObject();
+    const pos2 = new THREE.Vector3(obj.position.x, 0, obj.position.z);
+    resolveCollision(pos2);
+    obj.position.x = pos2.x;
+    obj.position.z = pos2.z;
+    obj.position.y = EYE_H;
+  }
+
+  renderer.render(scene, camera);
+}
+animate();
+</script>
+</body>
+</html>
