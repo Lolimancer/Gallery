@@ -97,15 +97,19 @@ import { PointerLockControls } from 'three/addons/controls/PointerLockControls.j
 async function discoverImages() {
   const exts = ['.jpg', '.jpeg', '.png', '.webp', '.gif', '.bmp'];
   try {
-    const res = await fetch('images/');
+    const res = await fetch('images/', { cache: 'no-store' });
+    console.log('%cimages/ listing fetch', 'color:#8ab4f8', 'status', res.status, res.url);
     if (!res.ok) throw new Error('directory listing not available (HTTP ' + res.status + ')');
     const html = await res.text();
     const doc = new DOMParser().parseFromString(html, 'text/html');
-    const names = Array.from(doc.querySelectorAll('a'))
-      .map(a => decodeURIComponent((a.getAttribute('href') || '').split('/').pop() || ''))
+    const rawHrefs = Array.from(doc.querySelectorAll('a')).map(a => a.getAttribute('href') || '');
+    console.log('%cimages/ listing raw hrefs', 'color:#8ab4f8', rawHrefs);
+    const names = rawHrefs
+      .map(href => decodeURIComponent(href.split('/').pop().split('?')[0].split('#')[0] || ''))
       .filter(name => name && exts.some(ext => name.toLowerCase().endsWith(ext)));
     const unique = Array.from(new Set(names));
     unique.sort((a, b) => a.localeCompare(b, undefined, { numeric: true, sensitivity: 'base' }));
+    console.log('%cimages/ files found:', 'color:#4caf50', unique);
     return unique;
   } catch (err) {
     console.warn('Could not list images/ automatically — falling back to placeholders.', err);
@@ -274,10 +278,8 @@ const ART_Y = 2.0, FRAME_PAD = 0.14, EDGE = 0.65, MIN_GAP = 0.8;
 const KINDS = {
   L: { land: true,  h: 1.5 }, // landscape
   B: { land: true,  h: 1.9 }, // large landscape
-  P: { land: false, h: 2.1 }, // portrait
-  S: { land: false, h: 1.3 }, // small portrait
 };
-const ROTATION = ['L', 'B', 'L', 'P', 'L', 'B', 'L', 'P'];
+const ROTATION = ['L', 'B', 'L', 'B'];
 const sizeOf = k => { const { land, h } = KINDS[k]; return { land, h, w: land ? h * 16 / 9 : h * 9 / 16 }; };
 const outerW = k => sizeOf(k).w + FRAME_PAD;
 const insideAnyRoom = (x, z) => rooms.some(r => x > r.x[0] && x < r.x[1] && z > r.z[0] && z < r.z[1]);
@@ -287,7 +289,7 @@ function pickKinds(len) {
   const picked = [];
   let used = 0;
   for (;;) {
-    const tries = [ROTATION[(rot + picked.length) % ROTATION.length], 'L', 'P', 'S'];
+    const tries = [ROTATION[(rot + picked.length) % ROTATION.length], 'L'];
     const need = k => outerW(k) + (picked.length ? MIN_GAP : 0);
     const kind = tries.find(k => used + need(k) <= len - 2 * EDGE);
     if (!kind) break;
