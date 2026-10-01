@@ -60,9 +60,9 @@
 <div id="loading">LOADING GALLERY…</div>
 
 <div id="overlay" class="hidden">
-  <h1>THE GALLERY</h1>
+  <h1>WUWA GALLERY</h1>
   <p>Walk through the rooms with <b>W A S D</b> and look around with the mouse.
-     Approach a painting and click it for a closer look - click again (or press Esc) to step back.</p>
+     Approach a picture frame and click it for a closer look - click again (or press Esc) to step back.</p>
   <div class="enter">CLICK TO ENTER</div>
 </div>
 
@@ -84,18 +84,40 @@ import * as THREE from 'three';
 import { PointerLockControls } from 'three/addons/controls/PointerLockControls.js';
 
 /* ---------------------------------------------------------------------
-   CONFIG — swap artwork by replacing files in ./images/ named
-   img1.jpg, img2.jpg, ... imgN.jpg (any count; they are reused/cycled
-   across the museum). Pictures are exactly 16:9 (landscape) or 9:16
-   (portrait). Landscape files are matched to landscape frames and portrait
-   files to portrait frames; any mismatch is centre-cropped, never stretched.
+   CONFIG — swap artwork by dropping any image files into ./images/.
+   No particular filenames are required: the folder is listed at load
+   time (your dev server needs to show a directory listing for this —
+   VS Code "Live Server" does this automatically) and every image file
+   found is used, cycling if there are more frames than images. Each
+   frame's title is its image's filename, minus the extension. Pictures
+   are exactly 16:9 (landscape) or 9:16 (portrait); landscape files are
+   matched to landscape frames and portrait files to portrait frames,
+   any mismatch is centre-cropped, never stretched.
 --------------------------------------------------------------------- */
-const IMAGE_COUNT = 12;
-const IMAGE_PATH = i => `images/img${((i - 1) % IMAGE_COUNT) + 1}.jpg`;
-const TITLES = ['Hoa Lo','Interior','Chained','Departure',
-                'Inhumane','Artileries','Independence','Strategy',
-                'Communist','Supply Trail','Despair','Victory'];
-const TITLE_FOR = i => TITLES[(i - 1) % TITLES.length];
+async function discoverImages() {
+  const exts = ['.jpg', '.jpeg', '.png', '.webp', '.gif', '.bmp'];
+  try {
+    const res = await fetch('images/');
+    if (!res.ok) throw new Error('directory listing not available (HTTP ' + res.status + ')');
+    const html = await res.text();
+    const doc = new DOMParser().parseFromString(html, 'text/html');
+    const names = Array.from(doc.querySelectorAll('a'))
+      .map(a => decodeURIComponent((a.getAttribute('href') || '').split('/').pop() || ''))
+      .filter(name => name && exts.some(ext => name.toLowerCase().endsWith(ext)));
+    const unique = Array.from(new Set(names));
+    unique.sort((a, b) => a.localeCompare(b, undefined, { numeric: true, sensitivity: 'base' }));
+    return unique;
+  } catch (err) {
+    console.warn('Could not list images/ automatically — falling back to placeholders.', err);
+    return [];
+  }
+}
+
+const IMAGE_FILES = await discoverImages();
+const IMAGE_COUNT = IMAGE_FILES.length;
+const IMAGE_PATH = i => `images/${IMAGE_FILES[(i - 1) % IMAGE_COUNT]}`;
+const stripExt = name => name.replace(/\.[^.]+$/, '');
+const TITLE_FOR = i => IMAGE_COUNT ? stripExt(IMAGE_FILES[(i - 1) % IMAGE_COUNT]) : 'Untitled';
 
 const WALL_H = 4;
 const WALL_T = 0.3;
@@ -493,7 +515,7 @@ function startZoom(art) {
   animT = 0; animClock = 0;
 
   caption.querySelector('.t').textContent = art.userData.title;
-  caption.querySelector('.s').textContent = 'Gallery by Nguyen Trong Dung';
+  caption.querySelector('.s').textContent = 'Sponsored by Kurono Research Institute';
 }
 
 function endZoom() {
