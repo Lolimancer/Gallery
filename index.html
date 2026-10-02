@@ -123,23 +123,40 @@ import { PointerLockControls } from 'three/addons/controls/PointerLockControls.j
 --------------------------------------------------------------------- */
 async function discoverImages() {
   const exts = ['.jpg', '.jpeg', '.png', '.webp', '.gif', '.bmp'];
+
   try {
-    const res = await fetch('images/', { cache: 'no-store' });
-    console.log('%cimages/ listing fetch', 'color:#8ab4f8', 'status', res.status, res.url);
-    if (!res.ok) throw new Error('directory listing not available (HTTP ' + res.status + ')');
-    const html = await res.text();
-    const doc = new DOMParser().parseFromString(html, 'text/html');
-    const rawHrefs = Array.from(doc.querySelectorAll('a')).map(a => a.getAttribute('href') || '');
-    console.log('%cimages/ listing raw hrefs', 'color:#8ab4f8', rawHrefs);
-    const names = rawHrefs
-      .map(href => decodeURIComponent(href.split('/').pop().split('?')[0].split('#')[0] || ''))
-      .filter(name => name && exts.some(ext => name.toLowerCase().endsWith(ext)));
-    const unique = Array.from(new Set(names));
-    unique.sort((a, b) => a.localeCompare(b, undefined, { numeric: true, sensitivity: 'base' }));
-    console.log('%cimages/ files found:', 'color:#4caf50', unique);
-    return unique;
+    // GitHub Pages does not provide directory listings, so ask the
+    // GitHub repository API for the contents of the images/ folder.
+    const apiUrl = 'https://api.github.com/repos/lolimancer/Gallery/contents/images';
+
+    const res = await fetch(apiUrl, { cache: 'no-store' });
+    console.log('%cGitHub images API', 'color:#8ab4f8', 'status', res.status, res.url);
+
+    if (!res.ok) {
+      throw new Error('GitHub API returned HTTP ' + res.status);
+    }
+
+    const files = await res.json();
+
+    const names = files
+      .filter(file =>
+        file.type === 'file' &&
+        exts.some(ext => file.name.toLowerCase().endsWith(ext))
+      )
+      .map(file => file.name);
+
+    names.sort((a, b) =>
+      a.localeCompare(b, undefined, {
+        numeric: true,
+        sensitivity: 'base'
+      })
+    );
+
+    console.log('%cimages/ files found:', 'color:#4caf50', names);
+    return names;
+
   } catch (err) {
-    console.warn('Could not list images/ automatically — falling back to placeholders.', err);
+    console.warn('Could not retrieve images from GitHub automatically — falling back to placeholders.', err);
     return [];
   }
 }
