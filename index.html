@@ -5,34 +5,32 @@
 <title>Wuwa Gallery</title>
 <meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1, user-scalable=no, viewport-fit=cover" />
 <style>
-  html, body { margin:0; padding:0; overflow:hidden; height:100%; background:#0a0908; font-family: 'Georgia', 'Times New Roman', serif;
-    overscroll-behavior:none; -webkit-user-select:none; user-select:none; -webkit-touch-callout:none; -webkit-tap-highlight-color:transparent; }
-  canvas { display:block; touch-action:none; }
+  html, body { margin:0; padding:0; overflow:hidden; height:100%; background:#0a0908; font-family: 'Georgia', 'Times New Roman', serif; }
+  canvas { display:block; touch-action:none; -webkit-user-select:none; user-select:none; }
+  body { -webkit-touch-callout:none; -webkit-tap-highlight-color:transparent; overscroll-behavior:none; }
 
-  /* ---- mobile / touch ---- */
+  /* ---- touch controls ---- */
   #joystick {
-    position:fixed; left:calc(24px + env(safe-area-inset-left, 0px)); bottom:calc(28px + env(safe-area-inset-bottom, 0px));
-    width:132px; height:132px; border-radius:50%; z-index:8; display:none; touch-action:none;
-    background:radial-gradient(circle, rgba(243,236,221,0.10), rgba(15,12,10,0.40));
-    border:1px solid rgba(230,210,170,0.40);
-    transition:opacity .25s ease;
+    position:fixed; left:max(24px, env(safe-area-inset-left)); bottom:max(28px, env(safe-area-inset-bottom));
+    width:130px; height:130px; border-radius:50%; z-index:7; display:none;
+    background:rgba(15,12,10,0.35); border:1px solid rgba(230,210,170,0.35);
+    touch-action:none;
   }
   #joystick .knob {
-    position:absolute; left:50%; top:50%; width:56px; height:56px; border-radius:50%;
-    transform:translate(-50%,-50%); pointer-events:none;
-    background:rgba(243,236,221,0.55); border:1px solid rgba(230,210,170,0.75);
-    box-shadow:0 2px 8px rgba(0,0,0,0.45);
+    position:absolute; left:50%; top:50%; width:56px; height:56px; margin:-28px 0 0 -28px;
+    border-radius:50%; background:rgba(243,236,221,0.55); border:1px solid rgba(230,210,170,0.7);
+    pointer-events:none;
   }
-  body.touch-active #joystick { display:block; }
-  body.zoomed #joystick { opacity:0; pointer-events:none; }
-  body.touch #crosshair, body.touch #hint { display:none; }
-  body.touch #caption { bottom:calc(24px + env(safe-area-inset-bottom, 0px)); max-width:86vw; padding:10px 18px; }
+  body.touch.playing:not(.zoomed) #joystick { display:block; }
+  body.touch #crosshair { display:none; }
+  body.touch #hint { bottom:180px; }
+  body.touch #caption { bottom:max(24px, env(safe-area-inset-bottom)); max-width:86vw; padding:10px 18px; }
   body.touch #caption .t { font-size:17px; }
   body.touch #caption .s { font-size:12px; }
-  @media (max-width:600px) {
-    #overlay h1 { font-size:26px; }
-    #overlay p { font-size:14px; padding:0 24px; }
-  }
+  body.touch #overlay h1 { font-size:26px; }
+  body.touch #overlay p { padding:0 24px; font-size:14px; }
+  .desktop-only { display:inline; } .touch-only { display:none; }
+  body.touch .desktop-only { display:none; } body.touch .touch-only { display:inline; }
 
   #crosshair {
     position:fixed; top:50%; left:50%; width:6px; height:6px;
@@ -87,13 +85,15 @@
 
 <div id="overlay" class="hidden">
   <h1>WUWA GALLERY</h1>
-  <p id="overlay-text">Walk through the rooms with <b>W A S D</b> and look around with the mouse.
+  <p class="desktop-only">Walk through the rooms with <b>W A S D</b> and look around with the mouse.
      Approach a picture frame and click it for a closer look - click again (or press Esc) to step back.</p>
-  <div class="enter" id="overlay-enter">CLICK TO ENTER</div>
+  <p class="touch-only">Walk with the <b>joystick</b> and drag anywhere else on the screen to look around.
+     Tap a picture frame for a closer look - tap again to step back.</p>
+  <div class="enter"><span class="desktop-only">CLICK TO ENTER</span><span class="touch-only">TAP TO ENTER</span></div>
 </div>
 
 <div id="crosshair"></div>
-<div id="hint">Click to view</div>
+<div id="hint"><span class="desktop-only">Click to view</span><span class="touch-only">Tap a frame to view</span></div>
 <div id="joystick"><div class="knob"></div></div>
 <div id="caption"><div class="t"></div><div class="s"></div></div>
 
@@ -109,10 +109,6 @@
 <script type="module">
 import * as THREE from 'three';
 import { PointerLockControls } from 'three/addons/controls/PointerLockControls.js';
-
-// Touch-first device (phone / tablet): no pointer lock, use virtual joystick + drag-to-look
-const isTouch = window.matchMedia('(pointer: coarse)').matches || window.matchMedia('(hover: none)').matches;
-if (isTouch) document.body.classList.add('touch');
 
 /* ---------------------------------------------------------------------
    CONFIG — swap artwork by dropping any image files into ./images/.
@@ -169,25 +165,19 @@ scene.fog = new THREE.Fog(0x0b0a09, 18, 48);
 const camera = new THREE.PerspectiveCamera(70, window.innerWidth / window.innerHeight, 0.1, 200);
 camera.position.set(0, EYE_H, 3);
 
-const renderer = new THREE.WebGLRenderer({ antialias: true, powerPreference: 'high-performance' });
-renderer.setPixelRatio(Math.min(window.devicePixelRatio, isTouch ? 1.5 : 2));
+const renderer = new THREE.WebGLRenderer({ antialias: true });
+renderer.setPixelRatio(Math.min(window.devicePixelRatio, 2));
 renderer.setSize(window.innerWidth, window.innerHeight);
 renderer.shadowMap.enabled = true;
 renderer.shadowMap.type = THREE.PCFSoftShadowMap;
 renderer.outputColorSpace = THREE.SRGBColorSpace;
 document.body.appendChild(renderer.domElement);
 
-// Keep the view usable in portrait: widen the vertical FOV on narrow screens
-function fitCamera() {
-  const aspect = window.innerWidth / window.innerHeight;
-  camera.aspect = aspect;
-  camera.fov = aspect < 1 ? Math.min(100, 70 + (1 - aspect) * 55) : 70;
+window.addEventListener('resize', () => {
+  camera.aspect = window.innerWidth / window.innerHeight;
   camera.updateProjectionMatrix();
   renderer.setSize(window.innerWidth, window.innerHeight);
-}
-window.addEventListener('resize', fitCamera);
-window.addEventListener('orientationchange', () => setTimeout(fitCamera, 200));
-fitCamera();
+});
 
 /* ---------------------------------------------------------------------
    LIGHTING
@@ -197,7 +187,7 @@ scene.add(new THREE.HemisphereLight(0x9fa8b8, 0x2a2420, 0.55));
 const sun = new THREE.DirectionalLight(0xfff3e0, 0.5);
 sun.position.set(6, 10, 4);
 sun.castShadow = true;
-sun.shadow.mapSize.set(isTouch ? 1024 : 2048, isTouch ? 1024 : 2048);
+sun.shadow.mapSize.set(2048, 2048);
 sun.shadow.camera.left = -22; sun.shadow.camera.right = 22;
 sun.shadow.camera.top = 22; sun.shadow.camera.bottom = -22;
 sun.shadow.camera.far = 60;
@@ -275,7 +265,6 @@ const wallDefs = [
 ];
 
 const collisionSegments = []; // {x1,z1,x2,z2}
-const wallMeshes = [];        // wall boxes, used so taps can't pick paintings through walls
 const wallSegments = [];      // solid wall pieces {axis,at,a,b}, used to hang paintings
 
 function buildWallSegment(axis, at, a, b) {
@@ -295,7 +284,6 @@ function buildWallSegment(axis, at, a, b) {
   mesh.castShadow = true;
   mesh.receiveShadow = true;
   scene.add(mesh);
-  wallMeshes.push(mesh);
 }
 
 for (const wdef of wallDefs) {
@@ -472,114 +460,103 @@ const caption = document.getElementById('caption');
 loading.style.display = 'none';
 overlay.classList.remove('hidden');
 
-if (isTouch) {
-  document.getElementById('overlay-text').innerHTML =
-    'Walk with the <b>joystick</b> (bottom left) and drag anywhere else on the screen to look around. ' +
-    'Tap a picture frame for a closer look - tap again to step back.';
-  document.getElementById('overlay-enter').textContent = 'TAP TO ENTER';
-}
+const IS_TOUCH = window.matchMedia('(pointer: coarse)').matches;
+let touchActive = false;
+const isActive = () => IS_TOUCH ? touchActive : controls.isLocked;
+if (IS_TOUCH) document.body.classList.add('touch');
 
 overlay.addEventListener('click', () => {
   if (zoomed) return;
-  if (isTouch) enterTouchMode(); else controls.lock();
+  if (IS_TOUCH) {
+    touchActive = true;
+    document.body.classList.add('playing');
+    overlay.classList.add('hidden');
+    const el = document.documentElement;
+    try { (el.requestFullscreen || el.webkitRequestFullscreen)?.call(el); } catch (e) {}
+  } else {
+    controls.lock();
+  }
 });
 controls.addEventListener('lock', () => { overlay.classList.add('hidden'); });
 controls.addEventListener('unlock', () => {
   if (!zoomed) overlay.classList.remove('hidden');
 });
 
-const keys = {};
-document.addEventListener('keydown', (e) => { keys[e.code] = true; });
-document.addEventListener('keyup', (e) => { keys[e.code] = false; });
+/* ---- touch: virtual joystick + drag-to-look + tap-to-view ---- */
+const joy = { x: 0, y: 0 };            // x: strafe, y: forward (-1..1)
+const joyEl = document.getElementById('joystick');
+const knobEl = joyEl.querySelector('.knob');
+let joyId = null;
+const JOY_R = 48;
 
-/* ---------------------------------------------------------------------
-   TOUCH CONTROLS — virtual joystick (move) + drag anywhere (look) + tap (view)
---------------------------------------------------------------------- */
-let touchActive = false;
-const isActive = () => controls.isLocked || touchActive;
-
-function enterTouchMode() {
-  touchActive = true;
-  overlay.classList.add('hidden');
-  document.body.classList.add('touch-active');
-  // immersive: hide the browser bars where supported (ignored/rejected elsewhere)
-  try {
-    const p = document.documentElement.requestFullscreen?.({ navigationUI: 'hide' });
-    if (p && p.catch) p.catch(() => {});
-  } catch (_) {}
-}
-
-const stick = document.getElementById('joystick');
-const knob = stick.querySelector('.knob');
-const joy = { id: null, x: 0, y: 0 };
-const JOY_DEADZONE = 0.12;
-
-function resetJoystick() {
-  joy.id = null; joy.x = 0; joy.y = 0;
-  knob.style.transform = 'translate(-50%, -50%)';
-}
-
-function updateJoystick(e) {
-  const r = stick.getBoundingClientRect();
-  const max = r.width * 0.36;
+function joyUpdate(e) {
+  const r = joyEl.getBoundingClientRect();
   let dx = e.clientX - (r.left + r.width / 2);
   let dy = e.clientY - (r.top + r.height / 2);
   const d = Math.hypot(dx, dy);
-  if (d > max) { dx *= max / d; dy *= max / d; }
-  knob.style.transform = `translate(calc(-50% + ${dx}px), calc(-50% + ${dy}px))`;
-  const mag = Math.hypot(dx, dy) / max;
-  if (mag < JOY_DEADZONE) { joy.x = 0; joy.y = 0; }
-  else { joy.x = dx / max; joy.y = dy / max; }
+  if (d > JOY_R) { dx = dx / d * JOY_R; dy = dy / d * JOY_R; }
+  knobEl.style.transform = `translate(${dx}px, ${dy}px)`;
+  joy.x = dx / JOY_R;
+  joy.y = -dy / JOY_R;
 }
-
-stick.addEventListener('pointerdown', (e) => {
-  if (joy.id !== null) return;
-  joy.id = e.pointerId;
-  stick.setPointerCapture(e.pointerId);
-  updateJoystick(e);
+function joyReset() {
+  joyId = null; joy.x = joy.y = 0;
+  knobEl.style.transform = 'translate(0,0)';
+}
+joyEl.addEventListener('pointerdown', (e) => {
+  if (joyId !== null) return;
+  joyId = e.pointerId;
+  joyEl.setPointerCapture(e.pointerId);
+  joyUpdate(e);
   e.preventDefault();
 });
-stick.addEventListener('pointermove', (e) => { if (e.pointerId === joy.id) updateJoystick(e); });
-const endJoystick = (e) => { if (e.pointerId === joy.id) resetJoystick(); };
-stick.addEventListener('pointerup', endJoystick);
-stick.addEventListener('pointercancel', endJoystick);
-stick.addEventListener('lostpointercapture', endJoystick);
+joyEl.addEventListener('pointermove', (e) => { if (e.pointerId === joyId) joyUpdate(e); });
+['pointerup', 'pointercancel'].forEach(t => joyEl.addEventListener(t, (e) => { if (e.pointerId === joyId) joyReset(); }));
 
-// Look: drag on the canvas. A short tap with little movement picks a painting.
+const LOOK_SENS = 0.0048;
 const lookEuler = new THREE.Euler(0, 0, 0, 'YXZ');
-const LOOK_SENS = 0.0045;
-let look = null;
-const canvasEl = renderer.domElement;
-
-canvasEl.addEventListener('pointerdown', (e) => {
-  if (!touchActive || e.pointerType === 'mouse' || look) return;
-  look = { id: e.pointerId, x: e.clientX, y: e.clientY, sx: e.clientX, sy: e.clientY, t: performance.now(), moved: false };
-  canvasEl.setPointerCapture(e.pointerId);
+let lookId = null, lookLX = 0, lookLY = 0, lookStartX = 0, lookStartY = 0, lookStartT = 0, lookMoved = false;
+const cv = renderer.domElement;
+cv.addEventListener('pointerdown', (e) => {
+  if (!IS_TOUCH || !touchActive || lookId !== null) return;
+  lookId = e.pointerId;
+  cv.setPointerCapture(e.pointerId);
+  lookLX = lookStartX = e.clientX; lookLY = lookStartY = e.clientY;
+  lookStartT = performance.now(); lookMoved = false;
 });
-canvasEl.addEventListener('pointermove', (e) => {
-  if (!look || e.pointerId !== look.id) return;
-  const dx = e.clientX - look.x, dy = e.clientY - look.y;
-  look.x = e.clientX; look.y = e.clientY;
-  if (!look.moved && Math.hypot(e.clientX - look.sx, e.clientY - look.sy) > 10) look.moved = true;
-  if (!look.moved || zoomed || animT < 1) return;
-  lookEuler.setFromQuaternion(camera.quaternion);
-  lookEuler.y -= dx * LOOK_SENS;
-  lookEuler.x -= dy * LOOK_SENS;
-  lookEuler.x = Math.max(-1.4, Math.min(1.4, lookEuler.x));
-  camera.quaternion.setFromEuler(lookEuler);
+cv.addEventListener('pointermove', (e) => {
+  if (e.pointerId !== lookId) return;
+  if (Math.hypot(e.clientX - lookStartX, e.clientY - lookStartY) > 10) lookMoved = true;
+  if (zoomed || animT < 1) { lookLX = e.clientX; lookLY = e.clientY; return; }
+  if (lookMoved) {
+    lookEuler.setFromQuaternion(camera.quaternion);
+    lookEuler.y -= (e.clientX - lookLX) * LOOK_SENS;
+    lookEuler.x -= (e.clientY - lookLY) * LOOK_SENS;
+    lookEuler.x = Math.max(-Math.PI / 2 + 0.01, Math.min(Math.PI / 2 - 0.01, lookEuler.x));
+    camera.quaternion.setFromEuler(lookEuler);
+  }
+  lookLX = e.clientX; lookLY = e.clientY;
 });
-const endLook = (e) => {
-  if (!look || e.pointerId !== look.id) return;
-  const l = look; look = null;
-  if (e.type === 'pointerup' && !l.moved && performance.now() - l.t < 400) handleTap(e.clientX, e.clientY);
+const lookEnd = (e) => {
+  if (e.pointerId !== lookId) return;
+  lookId = null;
+  if (e.type === 'pointerup' && !lookMoved && performance.now() - lookStartT < 500) onTap(e.clientX, e.clientY);
 };
-canvasEl.addEventListener('pointerup', endLook);
-canvasEl.addEventListener('pointercancel', endLook);
+cv.addEventListener('pointerup', lookEnd);
+cv.addEventListener('pointercancel', lookEnd);
 
-// stop iOS pinch-zoom / rubber-banding while exploring
-document.addEventListener('gesturestart', (e) => e.preventDefault());
-document.addEventListener('touchmove', (e) => { if (touchActive) e.preventDefault(); }, { passive: false });
-document.addEventListener('contextmenu', (e) => { if (isTouch) e.preventDefault(); });
+function onTap(x, y) {
+  if (animT < 1) return;
+  if (zoomed) { endZoom(); return; }
+  pointer.set((x / window.innerWidth) * 2 - 1, -(y / window.innerHeight) * 2 + 1);
+  raycaster.setFromCamera(pointer, camera);
+  const hits = raycaster.intersectObjects(paintingMeshes, false);
+  if (hits.length) startZoom(hits[0].object);
+}
+
+const keys = {};
+document.addEventListener('keydown', (e) => { keys[e.code] = true; });
+document.addEventListener('keyup', (e) => { keys[e.code] = false; });
 
 const velocity = new THREE.Vector3();
 const MOVE_SPEED = 4.2;
@@ -609,6 +586,7 @@ function resolveCollision(pos) {
 const raycaster = new THREE.Raycaster();
 raycaster.far = 4.2;
 const screenCenter = new THREE.Vector2(0, 0);
+const pointer = new THREE.Vector2();
 
 let zoomed = false;
 let zoomTarget = null;
@@ -628,23 +606,9 @@ function tryFocusHovered() {
   if (hits.length) startZoom(hits[0].object);
 }
 
-function handleTap(x, y) {
-  if (zoomed) { endZoom(); return; }
-  if (animT < 1) return;
-  const ndc = new THREE.Vector2((x / window.innerWidth) * 2 - 1, -(y / window.innerHeight) * 2 + 1);
-  const prevFar = raycaster.far;
-  raycaster.far = 6;
-  raycaster.setFromCamera(ndc, camera);
-  // include walls so a painting hanging on the far side of a wall can't be picked
-  const hits = raycaster.intersectObjects([...paintingMeshes, ...wallMeshes], false);
-  raycaster.far = prevFar;
-  if (hits.length && hits[0].object.userData.isPainting) startZoom(hits[0].object);
-}
-
 function startZoom(art) {
   zoomed = true;
   document.body.classList.add('zoomed');
-  resetJoystick();
   zoomTarget = art;
   controls.unlock ? null : null; // keep pointer lock active for smoothness
 
@@ -656,7 +620,7 @@ function startZoom(art) {
   art.getWorldPosition(wp);
   const tanHalf = Math.tan(THREE.MathUtils.degToRad(camera.fov) / 2);
   const fit = Math.max((art.userData.h / 2) / tanHalf, (art.userData.w / 2) / (tanHalf * camera.aspect));
-  const dist = Math.min(camera.aspect < 1 ? 4.4 : 3.6, Math.max(1.3, fit * 1.35));
+  const dist = Math.min(3.0, Math.max(0.9, fit * 1.1));
   camStart.copy(camera.position);
   camEnd.copy(wp).addScaledVector(normal, dist);
   camEnd.y = Math.max(1.2, Math.min(2.6, wp.y));
@@ -685,7 +649,7 @@ function endZoom() {
 let zoomTargetPending = null;
 
 renderer.domElement.addEventListener('click', () => {
-  if (!controls.isLocked) return;
+  if (IS_TOUCH || !controls.isLocked) return;
   if (zoomed) {
     endZoom();
   } else {
@@ -707,7 +671,7 @@ function animate() {
   const dt = Math.min(clock.getDelta(), 0.05);
 
   // hover hint (only when not zoomed & locked)
-  if (controls.isLocked && !zoomed) {
+  if (isActive() && !zoomed) {
     raycaster.setFromCamera(screenCenter, camera);
     const hits = raycaster.intersectObjects(paintingMeshes, false);
     hint.classList.toggle('show', hits.length > 0);
@@ -723,14 +687,17 @@ function animate() {
     camera.quaternion.slerpQuaternions(quatStart, quatEnd, e);
     if (animT >= 1 && zoomed) caption.classList.add('show');
   } else if (isActive() && !zoomed) {
-    // walking (keyboard + analog joystick)
+    // walking
     let forward = (keys['KeyW'] || keys['ArrowUp'] ? 1 : 0) - (keys['KeyS'] || keys['ArrowDown'] ? 1 : 0);
     let strafe = (keys['KeyD'] || keys['ArrowRight'] ? 1 : 0) - (keys['KeyA'] || keys['ArrowLeft'] ? 1 : 0);
-    if (joy.id !== null) { strafe += joy.x; forward -= joy.y; }
 
     velocity.set(strafe, 0, forward);
-    const mag = velocity.length();
-    if (mag > 0) velocity.multiplyScalar((Math.min(1, mag) / mag) * MOVE_SPEED * dt);
+    if (velocity.lengthSq() > 0) velocity.normalize().multiplyScalar(MOVE_SPEED * dt);
+    if (joy.x || joy.y) {
+      // analog speed from joystick deflection
+      const mag = Math.min(1, Math.hypot(joy.x, joy.y));
+      velocity.set(joy.x, 0, joy.y).normalize().multiplyScalar(MOVE_SPEED * mag * dt);
+    }
 
     controls.moveRight(velocity.x);
     controls.moveForward(velocity.z);
