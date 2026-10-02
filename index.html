@@ -116,10 +116,10 @@ import { PointerLockControls } from 'three/addons/controls/PointerLockControls.j
    time (your dev server needs to show a directory listing for this —
    VS Code "Live Server" does this automatically) and every image file
    found is used, cycling if there are more frames than images. Each
-   frame's title is its image's filename, minus the extension. Pictures
-   are exactly 16:9 (landscape) or 9:16 (portrait); landscape files are
-   matched to landscape frames and portrait files to portrait frames,
-   any mismatch is centre-cropped, never stretched.
+   frame's title is its image's filename, minus the extension. Every
+   frame is sized to its own image's aspect ratio (landscape, portrait,
+   square, ultra-wide - anything), so pictures are never cropped or
+   stretched.
 --------------------------------------------------------------------- */
 async function discoverImages() {
   const exts = ['.jpg', '.jpeg', '.png', '.webp', '.gif', '.bmp'];
@@ -314,67 +314,104 @@ for (const wdef of wallDefs) {
 }
 
 /* ---------------------------------------------------------------------
-   PAINTINGS — hung automatically on every interior wall face.
-   Every wall piece gets at least one picture; long walls get several.
-   All pictures are exactly 16:9 (landscape) or 9:16 (portrait).
+   LOAD IMAGES FIRST — every frame is sized to its own picture's aspect
+   ratio, so each image's natural dimensions are needed before the walls
+   are laid out.
+--------------------------------------------------------------------- */
+const textureLoader = new THREE.TextureLoader();
+
+const loadImage = i => new Promise(resolve => textureLoader.load(
+  IMAGE_PATH(i),
+  tex => {
+    tex.colorSpace = THREE.SRGBColorSpace;
+    console.log('%cLoaded', 'color:#4caf50', IMAGE_PATH(i));
+    resolve({ index: i, tex, aspect: tex.image.width / tex.image.height });
+  },
+  undefined,
+  err => { console.warn('Failed to load', IMAGE_PATH(i), err); resolve(null); }
+));
+
+let images = (await Promise.all(
+  Array.from({ length: IMAGE_COUNT }, (_, k) => loadImage(k + 1))
+)).filter(Boolean);
+
+// No images available -> placeholders in a mix of shapes so the layout still works
+if (!images.length) {
+  images = [16 / 9, 16 / 9, 9 / 16, 4 / 3, 3 / 4, 1].map((aspect, k) => ({ index: k + 1, tex: null, aspect }));
+}
+
+/* ---------------------------------------------------------------------
+   PAINTINGS — hung automatically on every interior wall face, in image
+   order. Each frame takes the exact aspect ratio of its image (landscape,
+   portrait, square, ultra-wide... anything), so nothing is cropped or
+   stretched. Images are cycled if there are more frames than images.
 --------------------------------------------------------------------- */
 const ART_Y = 2.0, FRAME_PAD = 0.14, EDGE = 0.65, MIN_GAP = 0.8;
-const KINDS = {
-  L: { land: true,  h: 1.5 }, // landscape
-  B: { land: true,  h: 1.9 }, // large landscape
-};
-const ROTATION = ['L', 'B', 'L', 'B'];
-const sizeOf = k => { const { land, h } = KINDS[k]; return { land, h, w: land ? h * 16 / 9 : h * 9 / 16 }; };
-const outerW = k => sizeOf(k).w + FRAME_PAD;
+const BASE_H = [1.5, 1.9];     // landscape picture heights alternate for visual rhythm
+const PORTRAIT_BOOST = 1.25;   // portrait pictures are hung a little taller
+const MAX_ART_W = 3.6;         // widest picture area (very wide panoramas get scaled down)
+const MAX_ART_H = 2.5;         // tallest picture area (walls are 4 m high, centred on ART_Y)
+const MIN_SCALE = 0.7;         // how far a picture may shrink to squeeze onto a short wall
 const insideAnyRoom = (x, z) => rooms.some(r => x > r.x[0] && x < r.x[1] && z > r.z[0] && z < r.z[1]);
 
-let rot = 0;
-function pickKinds(len) {
-  const picked = [];
-  let used = 0;
-  for (;;) {
-    const tries = [ROTATION[(rot + picked.length) % ROTATION.length], 'L'];
-    const need = k => outerW(k) + (picked.length ? MIN_GAP : 0);
-    const kind = tries.find(k => used + need(k) <= len - 2 * EDGE);
-    if (!kind) break;
-    used += need(kind);
-    picked.push(kind);
-  }
-  rot += Math.max(1, picked.length);
-  return picked;
+function frameSize(aspect, baseH) {
+  const h0 = aspect >= 1 ? baseH : baseH * PORTRAIT_BOOST;
+  const w0 = h0 * aspect;
+  const s = Math.min(1, MAX_ART_W / w0, MAX_ART_H / h0);
+  return { w: w0 * s, h: h0 * s };
 }
 
 const paintingDefs = [];
+let imgCursor = 0, placed = 0;
 for (const seg of wallSegments) {
   const len = seg.b - seg.a, mid = (seg.a + seg.b) / 2;
   for (const n of [1, -1]) { // both faces of the wall
     const px = seg.axis === 'z' ? mid : seg.at + n * 0.6;
     const pz = seg.axis === 'z' ? seg.at + n * 0.6 : mid;
     if (!insideAnyRoom(px, pz)) continue; // exterior face, nobody sees it
-    const kinds = pickKinds(len);
-    const total = kinds.reduce((sum, k) => sum + outerW(k), 0);
-    const gap = (len - total) / (kinds.length + 1);
+
+    // take images in order until the wall is full
+    const row = [];
+    let used = 0;
+    const avail = len - 2 * EDGE;
+    for (;;) {
+      const img = images[imgCursor % images.length];
+      let { w, h } = frameSize(img.aspect, BASE_H[placed % BASE_H.length]);
+      const gapNeed = row.length ? MIN_GAP : 0;
+      const room = avail - used - gapNeed - FRAME_PAD;
+      if (w > room) {                     // too wide: shrink to fit, or stop
+        const s = room / w;
+        if (s < MIN_SCALE) break;
+        w *= s; h *= s;
+      }
+      row.push({ img, w, h });
+      used += w + FRAME_PAD + gapNeed;
+      imgCursor++; placed++;
+    }
+
+    const total = row.reduce((sum, f) => sum + f.w + FRAME_PAD, 0);
+    const gap = (len - total) / (row.length + 1);
     let t = seg.a + gap;
-    for (const k of kinds) {
-      const { land, w, h } = sizeOf(k);
-      const c = t + outerW(k) / 2;
-      t += outerW(k) + gap;
+    for (const f of row) {
+      const outer = f.w + FRAME_PAD;
+      const c = t + outer / 2;
+      t += outer + gap;
       paintingDefs.push(seg.axis === 'z'
-        ? { x: c, y: ART_Y, z: seg.at + n * 0.2, nx: 0, nz: n, w, h, land }
-        : { x: seg.at + n * 0.2, y: ART_Y, z: c, nx: n, nz: 0, w, h, land });
+        ? { x: c, y: ART_Y, z: seg.at + n * 0.2, nx: 0, nz: n, w: f.w, h: f.h, img: f.img }
+        : { x: seg.at + n * 0.2, y: ART_Y, z: c, nx: n, nz: 0, w: f.w, h: f.h, img: f.img });
     }
   }
 }
 // __END_LAYOUT__
 
-const textureLoader = new THREE.TextureLoader();
 const placeholderCache = {};
 
-function placeholderTexture(index, land) {
-  const key = index + (land ? 'l' : 'p');
-  if (placeholderCache[key]) return placeholderCache[key];
+function placeholderTexture(index, aspect) {
+  if (placeholderCache[index]) return placeholderCache[index];
   const c = document.createElement('canvas');
-  c.width = land ? 1024 : 576; c.height = land ? 576 : 1024;
+  const BIG = 1024;
+  c.width  = aspect >= 1 ? BIG : Math.round(BIG * aspect);
+  c.height = aspect >= 1 ? Math.round(BIG / aspect) : BIG;
   const ctx = c.getContext('2d');
   const hue = (index * 47) % 360;
   ctx.fillStyle = `hsl(${hue},35%,72%)`;
@@ -391,14 +428,13 @@ function placeholderTexture(index, land) {
   ctx.fillText(TITLE_FOR(index), c.width / 2, c.height - 18);
   const tex = new THREE.CanvasTexture(c);
   tex.colorSpace = THREE.SRGBColorSpace;
-  placeholderCache[key] = tex;
+  placeholderCache[index] = tex;
   return tex;
 }
 
 const paintingMeshes = []; // raycast targets, each has userData {title, w, h, land, normal}
 
-paintingDefs.forEach((p, i) => {
-  const index = i + 1; // placeholder colour/title until real images arrive
+paintingDefs.forEach((p) => {
   const yaw = Math.atan2(p.nx, p.nz); // rotates default +z-facing plane to (nx,0,nz)
 
   const group = new THREE.Group();
@@ -413,7 +449,9 @@ paintingDefs.forEach((p, i) => {
   frame.castShadow = true;
   group.add(frame);
 
-  const artMat = new THREE.MeshBasicMaterial({ color: 0xffffff, side: THREE.DoubleSide, map: placeholderTexture(index, p.land) });
+  // the plane has the image's own ratio, so the full image is shown uncropped
+  const map = p.img.tex || placeholderTexture(p.img.index, p.img.aspect);
+  const artMat = new THREE.MeshBasicMaterial({ color: 0xffffff, side: THREE.DoubleSide, map });
   const art = new THREE.Mesh(new THREE.PlaneGeometry(p.w, p.h), artMat);
   art.position.z = 0.02;
   art.userData.isPainting = true;
@@ -421,46 +459,12 @@ paintingDefs.forEach((p, i) => {
   scene.add(group);
 
   paintingMeshes.push(art);
-  art.userData.title = TITLE_FOR(index);
-  art.userData.land = p.land;
+  art.userData.title = TITLE_FOR(p.img.index);
+  art.userData.land = p.w >= p.h;
   art.userData.w = p.w;
   art.userData.h = p.h;
   art.userData.normal = new THREE.Vector3(p.nx, 0, p.nz);
   art.userData.worldPos = new THREE.Vector3(p.x, p.y, p.z);
-});
-
-// Load each image once, then hand out matching-orientation images to frames.
-const loadImage = i => new Promise(resolve => textureLoader.load(
-  IMAGE_PATH(i),
-  tex => {
-    tex.colorSpace = THREE.SRGBColorSpace;
-    console.log('%cLoaded', 'color:#4caf50', IMAGE_PATH(i));
-    resolve({ index: i, tex, land: tex.image.width >= tex.image.height });
-  },
-  undefined,
-  err => { console.warn('Failed to load', IMAGE_PATH(i), err); resolve(null); }
-));
-
-Promise.all(Array.from({ length: IMAGE_COUNT }, (_, k) => loadImage(k + 1))).then(list => {
-  const imgs = list.filter(Boolean);
-  if (!imgs.length) return;
-  const pools = { land: imgs.filter(m => m.land), port: imgs.filter(m => !m.land) };
-  const used = { land: 0, port: 0 };
-  for (const art of paintingMeshes) {
-    const key = art.userData.land ? 'land' : 'port';
-    const pool = pools[key].length ? pools[key] : imgs;
-    const img = pool[used[key]++ % pool.length];
-    const tex = img.tex.clone();
-    // centre-crop to the frame's ratio so nothing is stretched
-    const ia = img.tex.image.width / img.tex.image.height;
-    const pa = art.userData.w / art.userData.h;
-    if (ia > pa) { tex.repeat.x = pa / ia; tex.offset.x = (1 - tex.repeat.x) / 2; }
-    else         { tex.repeat.y = ia / pa; tex.offset.y = (1 - tex.repeat.y) / 2; }
-    tex.needsUpdate = true;
-    art.material.map = tex;
-    art.material.needsUpdate = true;
-    art.userData.title = TITLE_FOR(img.index);
-  }
 });
 
 /* ---------------------------------------------------------------------
