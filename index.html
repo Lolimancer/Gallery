@@ -123,25 +123,44 @@ import { PointerLockControls } from 'three/addons/controls/PointerLockControls.j
 --------------------------------------------------------------------- */
 async function discoverImages() {
   const exts = ['.jpg', '.jpeg', '.png', '.webp', '.gif', '.bmp'];
+  const isImg = name => name && exts.some(ext => name.toLowerCase().endsWith(ext));
+  const sortNames = arr => Array.from(new Set(arr)).sort((a, b) => a.localeCompare(b, undefined, { numeric: true, sensitivity: 'base' }));
+
+  // 1) Directory listing (VS Code Live Server, python -m http.server, etc.)
   try {
     const res = await fetch('images/', { cache: 'no-store' });
-    console.log('%cimages/ listing fetch', 'color:#8ab4f8', 'status', res.status, res.url);
-    if (!res.ok) throw new Error('directory listing not available (HTTP ' + res.status + ')');
-    const html = await res.text();
-    const doc = new DOMParser().parseFromString(html, 'text/html');
-    const rawHrefs = Array.from(doc.querySelectorAll('a')).map(a => a.getAttribute('href') || '');
-    console.log('%cimages/ listing raw hrefs', 'color:#8ab4f8', rawHrefs);
-    const names = rawHrefs
-      .map(href => decodeURIComponent(href.split('/').pop().split('?')[0].split('#')[0] || ''))
-      .filter(name => name && exts.some(ext => name.toLowerCase().endsWith(ext)));
-    const unique = Array.from(new Set(names));
-    unique.sort((a, b) => a.localeCompare(b, undefined, { numeric: true, sensitivity: 'base' }));
-    console.log('%cimages/ files found:', 'color:#4caf50', unique);
-    return unique;
-  } catch (err) {
-    console.warn('Could not list images/ automatically — falling back to placeholders.', err);
-    return [];
-  }
+    if (!res.ok) throw new Error('HTTP ' + res.status);
+    const doc = new DOMParser().parseFromString(await res.text(), 'text/html');
+    const names = Array.from(doc.querySelectorAll('a'))
+      .map(a => decodeURIComponent((a.getAttribute('href') || '').split('/').pop().split('?')[0].split('#')[0] || ''))
+      .filter(isImg);
+    if (names.length) { console.log('images found via directory listing:', names); return sortNames(names); }
+  } catch (err) { console.warn('No directory listing for images/ (normal on GitHub Pages).', err.message); }
+
+  // 2) Optional manifest: images/images.json  ->  ["a.jpg", "b.png", ...]
+  try {
+    const res = await fetch('images/images.json', { cache: 'no-store' });
+    if (res.ok) {
+      const names = (await res.json()).filter(isImg);
+      if (names.length) { console.log('images found via images.json:', names); return sortNames(names); }
+    }
+  } catch (err) { /* no manifest */ }
+
+  // 3) GitHub Pages: ask the GitHub API what is in the repo's images/ folder
+  try {
+    const m = location.hostname.match(/^(.+)\.github\.io$/);
+    if (m) {
+      const owner = m[1];
+      const repo = location.pathname.split('/').filter(Boolean)[0] || (owner + '.github.io');
+      const res = await fetch(`https://api.github.com/repos/${owner}/${repo}/contents/images`);
+      if (!res.ok) throw new Error('GitHub API HTTP ' + res.status);
+      const names = (await res.json()).filter(f => f.type === 'file').map(f => f.name).filter(isImg);
+      if (names.length) { console.log('images found via GitHub API:', names); return sortNames(names); }
+    }
+  } catch (err) { console.warn('GitHub API listing failed.', err.message); }
+
+  console.warn('Could not find any images - falling back to placeholders.');
+  return [];
 }
 
 const IMAGE_FILES = await discoverImages();
