@@ -3,10 +3,29 @@
 <head>
 <meta charset="UTF-8" />
 <title>Wuwa Gallery</title>
-<meta name="viewport" content="width=device-width, initial-scale=1" />
+<meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1, user-scalable=no, viewport-fit=cover" />
 <style>
-  html, body { margin:0; padding:0; overflow:hidden; height:100%; background:#0a0908; font-family: 'Georgia', 'Times New Roman', serif; }
-  canvas { display:block; }
+  html, body { margin:0; padding:0; overflow:hidden; height:100%; background:#0a0908; font-family: 'Georgia', 'Times New Roman', serif; touch-action:none; overscroll-behavior:none; -webkit-user-select:none; user-select:none; }
+  canvas { display:block; touch-action:none; }
+
+  #joystick {
+    position:fixed; left:28px; bottom:28px; width:110px; height:110px;
+    border-radius:50%; background:rgba(243,236,221,0.08);
+    border:1px solid rgba(243,236,221,0.25); z-index:8; display:none;
+    touch-action:none;
+  }
+  #joystick.show { display:block; }
+  #joystickKnob {
+    position:absolute; left:50%; top:50%; width:46px; height:46px;
+    margin:-23px 0 0 -23px; border-radius:50%;
+    background:rgba(243,236,221,0.35); border:1px solid rgba(243,236,221,0.6);
+    pointer-events:none;
+  }
+
+  #lookLayer {
+    position:fixed; inset:0; z-index:7; display:none; touch-action:none;
+  }
+  #lookLayer.show { display:block; }
 
   #crosshair {
     position:fixed; top:50%; left:50%; width:6px; height:6px;
@@ -53,11 +72,32 @@
     display:flex; align-items:center; justify-content:center; color:#c9bfa8;
     font-size:14px; letter-spacing:0.1em;
   }
+
+  #artOverlay {
+    position:fixed; inset:0; z-index:25; background:rgba(6,5,4,0.97);
+    display:flex; flex-direction:column; align-items:center; justify-content:center;
+    opacity:0; pointer-events:none; transition:opacity .35s ease;
+    padding:env(safe-area-inset-top,0) env(safe-area-inset-right,0) env(safe-area-inset-bottom,0) env(safe-area-inset-left,0);
+  }
+  #artOverlay.show { opacity:1; pointer-events:auto; }
+  #artOverlayImg {
+    max-width:94vw; max-height:84vh; object-fit:contain;
+    box-shadow:0 10px 50px rgba(0,0,0,0.6); border:1px solid rgba(230,210,170,0.2);
+  }
+  #artOverlayCaption { text-align:center; color:#f3ecdd; margin-top:16px; padding:0 20px; }
+  #artOverlayCaption .t { font-size:20px; letter-spacing:0.03em; margin-bottom:4px; }
+  #artOverlayCaption .s { font-size:13px; color:#c9bfa8; font-style:italic; }
+  #artOverlayClose {
+    position:fixed; top:calc(18px + env(safe-area-inset-top,0)); right:calc(18px + env(safe-area-inset-right,0));
+    width:42px; height:42px; border-radius:50%; border:1px solid rgba(243,236,221,0.35);
+    background:rgba(20,17,14,0.6); color:#f3ecdd; font-size:18px; line-height:1;
+    display:flex; align-items:center; justify-content:center; cursor:pointer;
+  }
 </style>
 </head>
 <body>
 
-<div id="loading">LOADING GALLERY…</div>
+<div id="loading">BAKING GALLERY…</div>
 
 <div id="overlay" class="hidden">
   <h1>WUWA GALLERY</h1>
@@ -69,6 +109,15 @@
 <div id="crosshair"></div>
 <div id="hint">Click to view</div>
 <div id="caption"><div class="t"></div><div class="s"></div></div>
+
+<div id="lookLayer"></div>
+<div id="joystick"><div id="joystickKnob"></div></div>
+
+<div id="artOverlay">
+  <img id="artOverlayImg" alt="" />
+  <div id="artOverlayCaption"><div class="t"></div><div class="s"></div></div>
+  <div id="artOverlayClose">✕</div>
+</div>
 
 <script type="importmap">
 {
@@ -456,16 +505,49 @@ Promise.all(Array.from({ length: IMAGE_COUNT }, (_, k) => loadImage(k + 1))).the
 const controls = new PointerLockControls(camera, renderer.domElement);
 scene.add(controls.getObject());
 
+const isTouch = matchMedia('(pointer: coarse)').matches || navigator.maxTouchPoints > 0;
+
 const overlay = document.getElementById('overlay');
 const loading = document.getElementById('loading');
 const hint = document.getElementById('hint');
 const caption = document.getElementById('caption');
+const crosshair = document.getElementById('crosshair');
+const joystickEl = document.getElementById('joystick');
+const joystickKnob = document.getElementById('joystickKnob');
+const lookLayer = document.getElementById('lookLayer');
 
 loading.style.display = 'none';
 overlay.classList.remove('hidden');
 
+let mobileActive = false;
+let yaw = 0, pitch = 0;
+const PITCH_LIMIT = 1.45;
+const LOOK_SENS = 0.0032;
+
+function syncYawPitchFromCamera() {
+  const e = new THREE.Euler().setFromQuaternion(camera.quaternion, 'YXZ');
+  yaw = e.y; pitch = e.x;
+}
+
+if (isTouch) {
+  overlay.querySelector('p').textContent =
+    'Use the joystick to walk and drag anywhere else to look around. Tap a picture frame for a closer look — tap the close button to step back.';
+  overlay.querySelector('.enter').textContent = 'TAP TO ENTER';
+  hint.textContent = 'Tap to view';
+  crosshair.style.display = 'none';
+  joystickEl.classList.add('show');
+  lookLayer.classList.add('show');
+}
+
 overlay.addEventListener('click', () => {
-  if (!zoomed) controls.lock();
+  if (zoomed) return;
+  if (isTouch) {
+    overlay.classList.add('hidden');
+    mobileActive = true;
+    syncYawPitchFromCamera();
+  } else {
+    controls.lock();
+  }
 });
 controls.addEventListener('lock', () => { overlay.classList.add('hidden'); });
 controls.addEventListener('unlock', () => {
@@ -475,6 +557,76 @@ controls.addEventListener('unlock', () => {
 const keys = {};
 document.addEventListener('keydown', (e) => { keys[e.code] = true; });
 document.addEventListener('keyup', (e) => { keys[e.code] = false; });
+
+// --- virtual joystick (movement) ---
+const joystickVec = { x: 0, y: 0 };
+let joystickId = null;
+function updateJoystick(t) {
+  const rect = joystickEl.getBoundingClientRect();
+  const cx = rect.left + rect.width / 2, cy = rect.top + rect.height / 2;
+  const max = rect.width / 2;
+  let dx = t.clientX - cx, dy = t.clientY - cy;
+  const dist = Math.hypot(dx, dy);
+  if (dist > max) { dx = (dx / dist) * max; dy = (dy / dist) * max; }
+  joystickKnob.style.transform = `translate(${dx}px, ${dy}px)`;
+  joystickVec.x = dx / max; joystickVec.y = dy / max;
+}
+joystickEl.addEventListener('touchstart', (e) => {
+  joystickId = e.changedTouches[0].identifier;
+  updateJoystick(e.changedTouches[0]);
+  e.preventDefault();
+}, { passive: false });
+joystickEl.addEventListener('touchmove', (e) => {
+  for (const t of e.changedTouches) if (t.identifier === joystickId) { updateJoystick(t); e.preventDefault(); }
+}, { passive: false });
+function endJoystick(e) {
+  for (const t of e.changedTouches) {
+    if (t.identifier !== joystickId) continue;
+    joystickId = null;
+    joystickVec.x = 0; joystickVec.y = 0;
+    joystickKnob.style.transform = 'translate(0,0)';
+  }
+}
+joystickEl.addEventListener('touchend', endJoystick);
+joystickEl.addEventListener('touchcancel', endJoystick);
+
+// --- drag to look + tap to focus a painting ---
+let lookId = null;
+let lookLast = { x: 0, y: 0 };
+let lookMoved = false;
+lookLayer.addEventListener('touchstart', (e) => {
+  if (zoomed) return;
+  const t = e.changedTouches[0];
+  lookId = t.identifier;
+  lookLast.x = t.clientX; lookLast.y = t.clientY;
+  lookMoved = false;
+  e.preventDefault();
+}, { passive: false });
+lookLayer.addEventListener('touchmove', (e) => {
+  for (const t of e.changedTouches) {
+    if (t.identifier !== lookId) continue;
+    const dx = t.clientX - lookLast.x, dy = t.clientY - lookLast.y;
+    if (Math.abs(dx) + Math.abs(dy) > 4) lookMoved = true;
+    lookLast.x = t.clientX; lookLast.y = t.clientY;
+    yaw -= dx * LOOK_SENS;
+    pitch = Math.max(-PITCH_LIMIT, Math.min(PITCH_LIMIT, pitch - dy * LOOK_SENS));
+    e.preventDefault();
+  }
+}, { passive: false });
+lookLayer.addEventListener('touchend', (e) => {
+  for (const t of e.changedTouches) {
+    if (t.identifier !== lookId) continue;
+    if (!lookMoved) {
+      const rect = renderer.domElement.getBoundingClientRect();
+      const nx = ((t.clientX - rect.left) / rect.width) * 2 - 1;
+      const ny = -(((t.clientY - rect.top) / rect.height) * 2 - 1);
+      raycaster.setFromCamera({ x: nx, y: ny }, camera);
+      const hits = raycaster.intersectObjects(paintingMeshes, false);
+      if (hits.length) startZoom(hits[0].object);
+    }
+    lookId = null;
+  }
+});
 
 const velocity = new THREE.Vector3();
 const MOVE_SPEED = 4.2;
@@ -517,6 +669,18 @@ let animT = 1; // 1 = animation finished
 const ANIM_TIME = 0.7;
 let animClock = 0;
 
+const artOverlay = document.getElementById('artOverlay');
+const artOverlayImg = document.getElementById('artOverlayImg');
+const artOverlayCaption = document.getElementById('artOverlayCaption');
+const artOverlayClose = document.getElementById('artOverlayClose');
+
+function getArtImageSrc(art) {
+  const img = art.material && art.material.map && art.material.map.image;
+  if (!img) return null;
+  if (img instanceof HTMLCanvasElement) return img.toDataURL();
+  return img.currentSrc || img.src || null;
+}
+
 function tryFocusHovered() {
   raycaster.setFromCamera(screenCenter, camera);
   const hits = raycaster.intersectObjects(paintingMeshes, false);
@@ -526,7 +690,6 @@ function tryFocusHovered() {
 function startZoom(art) {
   zoomed = true;
   zoomTarget = art;
-  controls.unlock ? null : null; // keep pointer lock active for smoothness
 
   camReturnPos.copy(camera.position);
   camReturnQuat.copy(camera.quaternion);
@@ -547,8 +710,10 @@ function startZoom(art) {
 
   animT = 0; animClock = 0;
 
-  caption.querySelector('.t').textContent = art.userData.title;
-  caption.querySelector('.s').textContent = 'Sponsored by Kurono Research Institute';
+  const src = getArtImageSrc(art);
+  artOverlayImg.src = src || '';
+  artOverlayCaption.querySelector('.t').textContent = art.userData.title;
+  artOverlayCaption.querySelector('.s').textContent = 'Sponsored by Kurono Research Institute';
 }
 
 function endZoom() {
@@ -558,10 +723,8 @@ function endZoom() {
   quatEnd.copy(camReturnQuat);
   animT = 0; animClock = 0;
   zoomed = false;
-  caption.classList.remove('show');
-  zoomTargetPending = null;
+  artOverlay.classList.remove('show');
 }
-let zoomTargetPending = null;
 
 renderer.domElement.addEventListener('click', () => {
   if (!controls.isLocked) return;
@@ -571,6 +734,9 @@ renderer.domElement.addEventListener('click', () => {
     tryFocusHovered();
   }
 });
+
+artOverlay.addEventListener('click', () => { if (zoomed) endZoom(); });
+artOverlayClose.addEventListener('click', (e) => { e.stopPropagation(); if (zoomed) endZoom(); });
 
 document.addEventListener('keydown', (e) => {
   if (e.code === 'Escape' && zoomed) endZoom();
@@ -600,14 +766,22 @@ function animate() {
     const e = 1 - Math.pow(1 - animT, 3); // ease-out cubic
     camera.position.lerpVectors(camStart, camEnd, e);
     camera.quaternion.slerpQuaternions(quatStart, quatEnd, e);
-    if (animT >= 1 && zoomed) caption.classList.add('show');
-  } else if (controls.isLocked && !zoomed) {
-    // walking
-    const forward = (keys['KeyW'] || keys['ArrowUp'] ? 1 : 0) - (keys['KeyS'] || keys['ArrowDown'] ? 1 : 0);
-    const strafe = (keys['KeyD'] || keys['ArrowRight'] ? 1 : 0) - (keys['KeyA'] || keys['ArrowLeft'] ? 1 : 0);
+    if (animT >= 1 && zoomed) artOverlay.classList.add('show');
+  } else if (!zoomed && (controls.isLocked || mobileActive)) {
+    // walking — desktop (keyboard) or touch (joystick + drag-look)
+    let fx, fz;
+    if (mobileActive) {
+      camera.quaternion.setFromEuler(new THREE.Euler(pitch, yaw, 0, 'YXZ'));
+      fx = joystickVec.x;
+      fz = -joystickVec.y;
+    } else {
+      fx = (keys['KeyD'] || keys['ArrowRight'] ? 1 : 0) - (keys['KeyA'] || keys['ArrowLeft'] ? 1 : 0);
+      fz = (keys['KeyW'] || keys['ArrowUp'] ? 1 : 0) - (keys['KeyS'] || keys['ArrowDown'] ? 1 : 0);
+    }
 
-    velocity.set(strafe, 0, forward);
-    if (velocity.lengthSq() > 0) velocity.normalize().multiplyScalar(MOVE_SPEED * dt);
+    velocity.set(fx, 0, fz);
+    if (velocity.lengthSq() > 1) velocity.normalize();
+    velocity.multiplyScalar(MOVE_SPEED * dt);
 
     controls.moveRight(velocity.x);
     controls.moveForward(velocity.z);
