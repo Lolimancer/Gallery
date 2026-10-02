@@ -94,58 +94,27 @@ import { PointerLockControls } from 'three/addons/controls/PointerLockControls.j
    matched to landscape frames and portrait files to portrait frames,
    any mismatch is centre-cropped, never stretched.
 --------------------------------------------------------------------- */
-async function listGithubFolder(owner, repo, path) {
-  const url = `https://api.github.com/repos/${owner}/${repo}/contents/${path}`;
-  const res = await fetch(url, { headers: { Accept: 'application/vnd.github+json' } });
-  if (!res.ok) throw new Error(`GitHub API HTTP ${res.status} for ${url}`);
-  const items = await res.json();
-  if (!Array.isArray(items)) throw new Error('unexpected GitHub API response shape');
-  return items.filter(it => it.type === 'file').map(it => it.name);
-}
-
 async function discoverImages() {
   const exts = ['.jpg', '.jpeg', '.png', '.webp', '.gif', '.bmp'];
-  const isImage = name => exts.some(ext => name.toLowerCase().endsWith(ext));
-  let names = [];
-
-  // GitHub Pages serves static files only — no directory listings — but
-  // being a GitHub repo, its contents can be listed via the GitHub API.
-  if (location.hostname.endsWith('.github.io')) {
-    const owner = location.hostname.split('.')[0];
-    const segments = location.pathname.split('/').filter(Boolean);
-    const repo = segments.length ? segments[0] : `${owner}.github.io`;
-    for (const base of ['images', 'docs/images']) {
-      try {
-        const files = await listGithubFolder(owner, repo, base);
-        console.log('%cGitHub API images found (' + base + '):', 'color:#4caf50', files);
-        if (files.length) { names = files; break; }
-      } catch (err) {
-        console.log('%cGitHub API lookup failed for ' + base + ':', 'color:#f5a623', err.message);
-      }
-    }
+  try {
+    const res = await fetch('images/', { cache: 'no-store' });
+    console.log('%cimages/ listing fetch', 'color:#8ab4f8', 'status', res.status, res.url);
+    if (!res.ok) throw new Error('directory listing not available (HTTP ' + res.status + ')');
+    const html = await res.text();
+    const doc = new DOMParser().parseFromString(html, 'text/html');
+    const rawHrefs = Array.from(doc.querySelectorAll('a')).map(a => a.getAttribute('href') || '');
+    console.log('%cimages/ listing raw hrefs', 'color:#8ab4f8', rawHrefs);
+    const names = rawHrefs
+      .map(href => decodeURIComponent(href.split('/').pop().split('?')[0].split('#')[0] || ''))
+      .filter(name => name && exts.some(ext => name.toLowerCase().endsWith(ext)));
+    const unique = Array.from(new Set(names));
+    unique.sort((a, b) => a.localeCompare(b, undefined, { numeric: true, sensitivity: 'base' }));
+    console.log('%cimages/ files found:', 'color:#4caf50', unique);
+    return unique;
+  } catch (err) {
+    console.warn('Could not list images/ automatically — falling back to placeholders.', err);
+    return [];
   }
-
-  // Local dev servers (Live Server, `python -m http.server`, etc.) auto-generate
-  // a directory listing page when you browse to a folder — use that instead.
-  if (!names.length) {
-    try {
-      const res = await fetch('images/', { cache: 'no-store' });
-      console.log('%cimages/ listing fetch', 'color:#8ab4f8', 'status', res.status, res.url);
-      if (!res.ok) throw new Error('directory listing not available (HTTP ' + res.status + ')');
-      const html = await res.text();
-      const doc = new DOMParser().parseFromString(html, 'text/html');
-      const rawHrefs = Array.from(doc.querySelectorAll('a')).map(a => a.getAttribute('href') || '');
-      names = rawHrefs.map(href => decodeURIComponent(href.split('/').pop().split('?')[0].split('#')[0] || ''));
-    } catch (err) {
-      console.warn('Could not list images/ automatically via directory listing either.', err);
-    }
-  }
-
-  const unique = Array.from(new Set(names.filter(isImage)));
-  unique.sort((a, b) => a.localeCompare(b, undefined, { numeric: true, sensitivity: 'base' }));
-  console.log('%cimages/ files found:', 'color:#4caf50', unique);
-  if (!unique.length) console.warn('No images found — frames will show placeholders.');
-  return unique;
 }
 
 const IMAGE_FILES = await discoverImages();
