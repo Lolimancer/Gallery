@@ -175,7 +175,7 @@ const PLAYER_R = 0.35;
 --------------------------------------------------------------------- */
 const scene = new THREE.Scene();
 scene.background = new THREE.Color(0x0b0a09);
-scene.fog = new THREE.Fog(0x0b0a09, 18, 48);
+scene.fog = new THREE.Fog(0x0b0a09, 20, 62);
 
 const camera = new THREE.PerspectiveCamera(70, window.innerWidth / window.innerHeight, 0.1, 200);
 camera.position.set(0, EYE_H, 3);
@@ -223,12 +223,18 @@ const rooms = [
   { x: [-6, 6],   z: [-5, 5]   }, // Entrance Hall
   { x: [-6, 6],   z: [-11, -5] }, // North Gallery
   { x: [6, 14],   z: [-5, 5]   }, // East Gallery
-  { x: [-14, -6], z: [-5, 5]   }, // West Gallery      (new)
-  { x: [-6, 6],   z: [5, 11]   }, // South Gallery     (new)
-  { x: [6, 14],   z: [-11, -5] }, // North-East Room   (new)
-  { x: [-14, -6], z: [-11, -5] }, // North-West Room   (new)
-  { x: [6, 14],   z: [5, 11]   }, // South-East Room   (new)
-  { x: [-14, -6], z: [5, 11]   }, // South-West Room   (new)
+  { x: [-14, -6], z: [-5, 5]   }, // West Gallery
+  { x: [-6, 6],   z: [5, 11]   }, // South Gallery
+  { x: [6, 14],   z: [-11, -5] }, // North-East Room
+  { x: [-14, -6], z: [-11, -5] }, // North-West Room
+  { x: [6, 14],   z: [5, 11]   }, // South-East Room
+  { x: [-14, -6], z: [5, 11]   }, // South-West Room
+  { x: [-6, 6],   z: [-17, -11] }, // Far North          (new)
+  { x: [6, 14],   z: [-17, -11] }, // Far North-East     (new)
+  { x: [-14, -6], z: [-17, -11] }, // Far North-West     (new)
+  { x: [-6, 6],   z: [11, 17]  }, // Far South           (new)
+  { x: [6, 14],   z: [11, 17]  }, // Far South-East      (new)
+  { x: [-14, -6], z: [11, 17]  }, // Far South-West      (new)
 ];
 
 for (const r of rooms) {
@@ -257,26 +263,38 @@ for (const r of rooms) {
 --------------------------------------------------------------------- */
 const wallDefs = [
   // outer shell, split at every room boundary
-  { axis: 'z', at: 11,  range: [-14, -6] }, { axis: 'z', at: 11,  range: [-6, 6] }, { axis: 'z', at: 11,  range: [6, 14] },
-  { axis: 'z', at: -11, range: [-14, -6] }, { axis: 'z', at: -11, range: [-6, 6] }, { axis: 'z', at: -11, range: [6, 14] },
-  { axis: 'x', at: -14, range: [-11, -5] }, { axis: 'x', at: -14, range: [-5, 5] }, { axis: 'x', at: -14, range: [5, 11] },
-  { axis: 'x', at: 14,  range: [-11, -5] }, { axis: 'x', at: 14,  range: [-5, 5] },  { axis: 'x', at: 14,  range: [5, 11] },
+  { axis: 'z', at: 17,  range: [-14, -6] }, { axis: 'z', at: 17,  range: [-6, 6] }, { axis: 'z', at: 17,  range: [6, 14] },
+  { axis: 'z', at: -17, range: [-14, -6] }, { axis: 'z', at: -17, range: [-6, 6] }, { axis: 'z', at: -17, range: [6, 14] },
+  { axis: 'x', at: -14, range: [-17, -11] }, { axis: 'x', at: -14, range: [-11, -5] }, { axis: 'x', at: -14, range: [-5, 5] },
+  { axis: 'x', at: -14, range: [5, 11] },    { axis: 'x', at: -14, range: [11, 17] },
+  { axis: 'x', at: 14,  range: [-17, -11] }, { axis: 'x', at: 14,  range: [-11, -5] }, { axis: 'x', at: 14,  range: [-5, 5] },
+  { axis: 'x', at: 14,  range: [5, 11] },    { axis: 'x', at: 14,  range: [11, 17] },
 
   // partitions running north-south (x = -6 and x = 6)
+  { axis: 'x', at: -6, range: [-17, -11] },
   { axis: 'x', at: -6, range: [-11, -5] },
   { axis: 'x', at: -6, range: [-5, 5],  gap: [-1.5, 1.5] }, // Hall <-> West Gallery
   { axis: 'x', at: -6, range: [5, 11] },
+  { axis: 'x', at: -6, range: [11, 17] },
+  { axis: 'x', at: 6,  range: [-17, -11] },
   { axis: 'x', at: 6,  range: [-11, -5] },
   { axis: 'x', at: 6,  range: [-5, 5],  gap: [-1.5, 1.5] }, // Hall <-> East Gallery
   { axis: 'x', at: 6,  range: [5, 11] },
+  { axis: 'x', at: 6,  range: [11, 17] },
 
-  // partitions running east-west (z = -5 and z = 5)
-  { axis: 'z', at: -5, range: [-14, -6], gap: [-11.2, -8.8] }, // West Gallery <-> North-West
-  { axis: 'z', at: -5, range: [-6, 6],   gap: [-1.5, 1.5] },   // Hall <-> North Gallery
-  { axis: 'z', at: -5, range: [6, 14],   gap: [8.8, 11.2] },   // East Gallery <-> North-East
-  { axis: 'z', at: 5,  range: [-14, -6], gap: [-11.2, -8.8] }, // West Gallery <-> South-West
-  { axis: 'z', at: 5,  range: [-6, 6],   gap: [-1.5, 1.5] },   // Hall <-> South Gallery
-  { axis: 'z', at: 5,  range: [6, 14],   gap: [8.8, 11.2] },   // East Gallery <-> South-East
+  // partitions running east-west (z = -11, -5, 5, 11)
+  { axis: 'z', at: -11, range: [-14, -6], gap: [-11.2, -8.8] }, // North-West <-> Far North-West
+  { axis: 'z', at: -11, range: [-6, 6],   gap: [-1.5, 1.5] },   // North Gallery <-> Far North
+  { axis: 'z', at: -11, range: [6, 14],   gap: [8.8, 11.2] },   // North-East <-> Far North-East
+  { axis: 'z', at: -5, range: [-14, -6], gap: [-11.2, -8.8] },  // West Gallery <-> North-West
+  { axis: 'z', at: -5, range: [-6, 6],   gap: [-1.5, 1.5] },    // Hall <-> North Gallery
+  { axis: 'z', at: -5, range: [6, 14],   gap: [8.8, 11.2] },    // East Gallery <-> North-East
+  { axis: 'z', at: 5,  range: [-14, -6], gap: [-11.2, -8.8] },  // West Gallery <-> South-West
+  { axis: 'z', at: 5,  range: [-6, 6],   gap: [-1.5, 1.5] },    // Hall <-> South Gallery
+  { axis: 'z', at: 5,  range: [6, 14],   gap: [8.8, 11.2] },    // East Gallery <-> South-East
+  { axis: 'z', at: 11, range: [-14, -6], gap: [-11.2, -8.8] },  // South-West <-> Far South-West
+  { axis: 'z', at: 11, range: [-6, 6],   gap: [-1.5, 1.5] },    // South Gallery <-> Far South
+  { axis: 'z', at: 11, range: [6, 14],   gap: [8.8, 11.2] },    // South-East <-> Far South-East
 ];
 
 const collisionSegments = []; // {x1,z1,x2,z2}
@@ -379,7 +397,11 @@ for (const seg of wallSegments) {
       const room = avail - used - gapNeed - FRAME_PAD;
       if (w > room) {                     // too wide: shrink to fit, or stop
         const s = room / w;
-        if (s < MIN_SCALE) break;
+        // a wall with nothing on it yet must still get something, even if
+        // that means shrinking well past MIN_SCALE — only a wall that
+        // already has a picture is allowed to stop here instead.
+        const floor = row.length ? MIN_SCALE : 0.3;
+        if (s < floor) break;
         w *= s; h *= s;
       }
       row.push({ img, w, h });
