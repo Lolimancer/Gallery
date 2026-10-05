@@ -77,6 +77,24 @@
     display:flex; align-items:center; justify-content:center; color:#c9bfa8;
     font-size:14px; letter-spacing:0.1em;
   }
+
+  /* ---- music control ---- */
+  #audio {
+    position:fixed; top:max(14px, env(safe-area-inset-top)); right:max(14px, env(safe-area-inset-right));
+    z-index:40; display:flex; align-items:center; gap:8px; padding:6px 12px 6px 8px;
+    background:rgba(15,12,10,0.55); border:1px solid rgba(230,210,170,0.35); border-radius:999px;
+    transition:opacity .25s;
+  }
+  #audio button {
+    all:unset; cursor:pointer; width:30px; height:30px; display:flex; align-items:center; justify-content:center;
+    color:#f3ecdd; border-radius:50%;
+  }
+  #audio button svg { width:20px; height:20px; }
+  #audio input[type=range] { width:96px; accent-color:#e6d2aa; touch-action:none; cursor:pointer; }
+  body.touch #audio input[type=range] { width:84px; }
+  /* while the mouse is captured on desktop the widget is just a status indicator (use M and - / +) */
+  body.locked #audio { opacity:0.4; pointer-events:none; }
+  #overlay .keys { font-size:12px; opacity:0.7; }
 </style>
 </head>
 <body>
@@ -87,7 +105,13 @@
   <h1>WUWA GALLERY</h1>
   <p class="desktop-only">Click on the pic for a closer look - click again (or press Esc) to step back.</p>
   <p class="touch-only">Tap a picture frame for a closer look - tap again to step back.</p>
+  <p class="keys desktop-only">Music: <b>M</b> mute &nbsp;·&nbsp; <b>-</b> / <b>+</b> volume (or use the slider, top right)</p>
   <div class="enter"><span class="desktop-only">CLICK TO ENTER</span><span class="touch-only">TAP TO ENTER</span></div>
+</div>
+
+<div id="audio">
+  <button id="muteBtn" type="button" aria-label="Mute / unmute music"></button>
+  <input id="volSlider" type="range" min="0" max="100" step="1" value="40" aria-label="Music volume" />
 </div>
 
 <div id="crosshair"></div>
@@ -506,8 +530,113 @@ let touchActive = false;
 const isActive = () => IS_TOUCH ? touchActive : controls.isLocked;
 if (IS_TOUCH) document.body.classList.add('touch');
 
+/* ---------------------------------------------------------------------
+   BACKGROUND MUSIC  (sound/bgmusic.*)  - starts when you enter the gallery
+--------------------------------------------------------------------- */
+const MUSIC_CANDIDATES = [
+  'sound/bgmusic.mp3', 'sound/bgmusic.ogg', 'sound/bgmusic.m4a', 'sound/bgmusic.wav',
+  'sound/bgmusic.webm', 'sound/bgmusic.flac', 'sound/bgmusic.aac', 'sound/bgmusic'
+];
+const audioUI = document.getElementById('audio');
+const muteBtn = document.getElementById('muteBtn');
+const volSlider = document.getElementById('volSlider');
+const bgm = new Audio();
+bgm.loop = true;
+bgm.preload = 'auto';
+
+let musicVol = 0.4, musicMuted = false;
+let musicOK = false, musicStarted = false;
+try {
+  const v = parseFloat(localStorage.getItem('gallery.vol'));
+  if (!isNaN(v)) musicVol = Math.min(1, Math.max(0, v));
+  musicMuted = localStorage.getItem('gallery.muted') === '1';
+} catch (e) {}
+
+// iOS Safari ignores audio.volume (always 1) - use a Web Audio gain node there.
+bgm.volume = 0.5;
+const needGainNode = Math.abs(bgm.volume - 0.5) > 0.01;
+bgm.volume = 1;
+let actx = null, gainNode = null;
+
+const ICON_ON  = '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M11 5 6 9H3v6h3l5 4z" fill="currentColor"/><path d="M15.5 8.5a5 5 0 0 1 0 7"/><path d="M18.5 5.5a9 9 0 0 1 0 13"/></svg>';
+const ICON_OFF = '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M11 5 6 9H3v6h3l5 4z" fill="currentColor"/><path d="m16 9 6 6"/><path d="m22 9-6 6"/></svg>';
+
+function applyVolume() {
+  const v = musicMuted ? 0 : musicVol;
+  if (gainNode) gainNode.gain.value = v; else bgm.volume = v;
+  muteBtn.innerHTML = (musicMuted || musicVol === 0) ? ICON_OFF : ICON_ON;
+  volSlider.value = Math.round(musicVol * 100);
+  try {
+    localStorage.setItem('gallery.vol', String(musicVol));
+    localStorage.setItem('gallery.muted', musicMuted ? '1' : '0');
+  } catch (e) {}
+}
+function setVolume(v) {
+  musicVol = Math.min(1, Math.max(0, v));
+  if (musicVol > 0) musicMuted = false;
+  applyVolume();
+}
+function toggleMute() {
+  if (musicMuted || musicVol === 0) { musicMuted = false; if (musicVol === 0) musicVol = 0.4; }
+  else musicMuted = true;
+  applyVolume();
+}
+applyVolume();
+
+volSlider.addEventListener('input', () => setVolume(volSlider.value / 100));
+volSlider.addEventListener('change', () => volSlider.blur());
+muteBtn.addEventListener('click', () => { toggleMute(); muteBtn.blur(); });
+document.addEventListener('keydown', (e) => {
+  if (e.repeat && e.code === 'KeyM') return;
+  if (e.code === 'KeyM') toggleMute();
+  else if (e.code === 'Minus' || e.code === 'NumpadSubtract') setVolume(musicVol - 0.05);
+  else if (e.code === 'Equal' || e.code === 'NumpadAdd') setVolume(musicVol + 0.05);
+});
+
+function tryPlay() {
+  const pr = bgm.play();
+  if (pr && pr.catch) pr.catch(err => console.warn('Music could not start:', err.message));
+}
+function startMusic() {
+  if (musicStarted) return;
+  musicStarted = true;
+  if (needGainNode && !actx) {
+    try {
+      const AC = window.AudioContext || window.webkitAudioContext;
+      actx = new AC();
+      const src = actx.createMediaElementSource(bgm);
+      gainNode = actx.createGain();
+      src.connect(gainNode).connect(actx.destination);
+    } catch (e) { console.warn('Web Audio unavailable:', e); }
+  }
+  if (actx && actx.state === 'suspended') actx.resume();
+  applyVolume();
+  if (musicOK) tryPlay();
+}
+document.addEventListener('visibilitychange', () => {
+  if (!musicStarted || !musicOK) return;
+  if (document.hidden) bgm.pause(); else tryPlay();
+});
+
+// find which extension actually exists in sound/
+(function loadMusic(i = 0) {
+  if (i >= MUSIC_CANDIDATES.length) {
+    console.warn('No background music found: put a file named "bgmusic" (e.g. bgmusic.mp3) in the sound/ folder.');
+    audioUI.style.display = 'none';
+    return;
+  }
+  const ok = () => { off(); musicOK = true; console.log('background music:', MUSIC_CANDIDATES[i]); if (musicStarted) tryPlay(); };
+  const bad = () => { off(); loadMusic(i + 1); };
+  const off = () => { bgm.removeEventListener('canplay', ok); bgm.removeEventListener('error', bad); };
+  bgm.addEventListener('canplay', ok);
+  bgm.addEventListener('error', bad);
+  bgm.src = MUSIC_CANDIDATES[i];
+  bgm.load();
+})();
+
 overlay.addEventListener('click', () => {
   if (zoomed) return;
+  startMusic();
   if (IS_TOUCH) {
     touchActive = true;
     document.body.classList.add('playing');
@@ -518,8 +647,9 @@ overlay.addEventListener('click', () => {
     controls.lock();
   }
 });
-controls.addEventListener('lock', () => { overlay.classList.add('hidden'); });
+controls.addEventListener('lock', () => { overlay.classList.add('hidden'); document.body.classList.add('locked'); });
 controls.addEventListener('unlock', () => {
+  document.body.classList.remove('locked');
   if (!zoomed) overlay.classList.remove('hidden');
 });
 
