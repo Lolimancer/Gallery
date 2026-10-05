@@ -72,6 +72,23 @@
   }
   #overlay.hidden { display:none; }
 
+  /* ---- background music toggle ---- */
+  #music-btn {
+    position:fixed; right:max(20px, env(safe-area-inset-right)); bottom:max(20px, env(safe-area-inset-bottom));
+    width:48px; height:48px; padding:0; border-radius:50%; z-index:25; cursor:pointer;
+    background:rgba(15,12,10,0.55); border:1px solid rgba(230,210,170,0.45);
+    display:flex; align-items:center; justify-content:center;
+    transition:opacity .25s ease, transform .15s ease;
+    -webkit-tap-highlight-color:transparent; touch-action:manipulation;
+  }
+  #music-btn img { width:28px; height:28px; object-fit:contain; pointer-events:none; user-select:none; -webkit-user-drag:none; }
+  #music-btn:hover { transform:scale(1.08); }
+  #music-btn.off { opacity:0.45; }
+  #music-btn.off::after {
+    content:''; position:absolute; left:10px; right:10px; top:50%; height:2px; margin-top:-1px;
+    background:rgba(243,236,221,0.9); transform:rotate(-45deg); border-radius:1px; pointer-events:none;
+  }
+
   #loading {
     position:fixed; inset:0; background:#0a0908; z-index:30;
     display:flex; align-items:center; justify-content:center; color:#c9bfa8;
@@ -81,14 +98,12 @@
 </head>
 <body>
 
-<div id="loading">LOADING GALLERY…</div>
+<div id="loading">XUAN LOADING…</div>
 
 <div id="overlay" class="hidden">
   <h1>WUWA GALLERY</h1>
-  <p class="desktop-only">Walk through the rooms with <b>W A S D</b> and look around with the mouse.
-     Approach a picture frame and click it for a closer look - click again (or press Esc) to step back.</p>
-  <p class="touch-only">Walk with the <b>joystick</b> and drag anywhere else on the screen to look around.
-     Tap a picture frame for a closer look - tap again to step back.</p>
+  <p class="desktop-only">Click on the pic for a closer look - click again (or press Esc) to step back.</p>
+  <p class="touch-only">Tap a picture frame for a closer look - tap again to step back.</p>
   <div class="enter"><span class="desktop-only">CLICK TO ENTER</span><span class="touch-only">TAP TO ENTER</span></div>
 </div>
 
@@ -96,6 +111,8 @@
 <div id="hint"><span class="desktop-only">Click to view</span><span class="touch-only">Tap a frame to view</span></div>
 <div id="joystick"><div class="knob"></div></div>
 <div id="caption"><div class="t"></div><div class="s"></div></div>
+<button id="music-btn" type="button" aria-label="Toggle background music" title="Toggle music (M)"><img src="sound/icon.png" alt="Music" draggable="false" /></button>
+<audio id="bgmusic" src="sound/bgmusic.mp3" loop preload="auto"></audio>
 
 <script type="importmap">
 {
@@ -177,7 +194,7 @@ const PLAYER_R = 0.35;
 --------------------------------------------------------------------- */
 const scene = new THREE.Scene();
 scene.background = new THREE.Color(0x0b0a09);
-scene.fog = new THREE.Fog(0x0b0a09, 18, 48);
+scene.fog = new THREE.Fog(0x0b0a09, 20, 62);
 
 const camera = new THREE.PerspectiveCamera(70, window.innerWidth / window.innerHeight, 0.1, 200);
 camera.position.set(0, EYE_H, 3);
@@ -225,12 +242,18 @@ const rooms = [
   { x: [-6, 6],   z: [-5, 5]   }, // Entrance Hall
   { x: [-6, 6],   z: [-11, -5] }, // North Gallery
   { x: [6, 14],   z: [-5, 5]   }, // East Gallery
-  { x: [-14, -6], z: [-5, 5]   }, // West Gallery      (new)
-  { x: [-6, 6],   z: [5, 11]   }, // South Gallery     (new)
-  { x: [6, 14],   z: [-11, -5] }, // North-East Room   (new)
-  { x: [-14, -6], z: [-11, -5] }, // North-West Room   (new)
-  { x: [6, 14],   z: [5, 11]   }, // South-East Room   (new)
-  { x: [-14, -6], z: [5, 11]   }, // South-West Room   (new)
+  { x: [-14, -6], z: [-5, 5]   }, // West Gallery
+  { x: [-6, 6],   z: [5, 11]   }, // South Gallery
+  { x: [6, 14],   z: [-11, -5] }, // North-East Room
+  { x: [-14, -6], z: [-11, -5] }, // North-West Room
+  { x: [6, 14],   z: [5, 11]   }, // South-East Room
+  { x: [-14, -6], z: [5, 11]   }, // South-West Room
+  { x: [-6, 6],   z: [-17, -11] }, // Far North          (new)
+  { x: [6, 14],   z: [-17, -11] }, // Far North-East     (new)
+  { x: [-14, -6], z: [-17, -11] }, // Far North-West     (new)
+  { x: [-6, 6],   z: [11, 17]  }, // Far South           (new)
+  { x: [6, 14],   z: [11, 17]  }, // Far South-East      (new)
+  { x: [-14, -6], z: [11, 17]  }, // Far South-West      (new)
 ];
 
 for (const r of rooms) {
@@ -259,26 +282,38 @@ for (const r of rooms) {
 --------------------------------------------------------------------- */
 const wallDefs = [
   // outer shell, split at every room boundary
-  { axis: 'z', at: 11,  range: [-14, -6] }, { axis: 'z', at: 11,  range: [-6, 6] }, { axis: 'z', at: 11,  range: [6, 14] },
-  { axis: 'z', at: -11, range: [-14, -6] }, { axis: 'z', at: -11, range: [-6, 6] }, { axis: 'z', at: -11, range: [6, 14] },
-  { axis: 'x', at: -14, range: [-11, -5] }, { axis: 'x', at: -14, range: [-5, 5] }, { axis: 'x', at: -14, range: [5, 11] },
-  { axis: 'x', at: 14,  range: [-11, -5] }, { axis: 'x', at: 14,  range: [-5, 5] },  { axis: 'x', at: 14,  range: [5, 11] },
+  { axis: 'z', at: 17,  range: [-14, -6] }, { axis: 'z', at: 17,  range: [-6, 6] }, { axis: 'z', at: 17,  range: [6, 14] },
+  { axis: 'z', at: -17, range: [-14, -6] }, { axis: 'z', at: -17, range: [-6, 6] }, { axis: 'z', at: -17, range: [6, 14] },
+  { axis: 'x', at: -14, range: [-17, -11] }, { axis: 'x', at: -14, range: [-11, -5] }, { axis: 'x', at: -14, range: [-5, 5] },
+  { axis: 'x', at: -14, range: [5, 11] },    { axis: 'x', at: -14, range: [11, 17] },
+  { axis: 'x', at: 14,  range: [-17, -11] }, { axis: 'x', at: 14,  range: [-11, -5] }, { axis: 'x', at: 14,  range: [-5, 5] },
+  { axis: 'x', at: 14,  range: [5, 11] },    { axis: 'x', at: 14,  range: [11, 17] },
 
   // partitions running north-south (x = -6 and x = 6)
+  { axis: 'x', at: -6, range: [-17, -11] },
   { axis: 'x', at: -6, range: [-11, -5] },
   { axis: 'x', at: -6, range: [-5, 5],  gap: [-1.5, 1.5] }, // Hall <-> West Gallery
   { axis: 'x', at: -6, range: [5, 11] },
+  { axis: 'x', at: -6, range: [11, 17] },
+  { axis: 'x', at: 6,  range: [-17, -11] },
   { axis: 'x', at: 6,  range: [-11, -5] },
   { axis: 'x', at: 6,  range: [-5, 5],  gap: [-1.5, 1.5] }, // Hall <-> East Gallery
   { axis: 'x', at: 6,  range: [5, 11] },
+  { axis: 'x', at: 6,  range: [11, 17] },
 
-  // partitions running east-west (z = -5 and z = 5)
-  { axis: 'z', at: -5, range: [-14, -6], gap: [-11.2, -8.8] }, // West Gallery <-> North-West
-  { axis: 'z', at: -5, range: [-6, 6],   gap: [-1.5, 1.5] },   // Hall <-> North Gallery
-  { axis: 'z', at: -5, range: [6, 14],   gap: [8.8, 11.2] },   // East Gallery <-> North-East
-  { axis: 'z', at: 5,  range: [-14, -6], gap: [-11.2, -8.8] }, // West Gallery <-> South-West
-  { axis: 'z', at: 5,  range: [-6, 6],   gap: [-1.5, 1.5] },   // Hall <-> South Gallery
-  { axis: 'z', at: 5,  range: [6, 14],   gap: [8.8, 11.2] },   // East Gallery <-> South-East
+  // partitions running east-west (z = -11, -5, 5, 11)
+  { axis: 'z', at: -11, range: [-14, -6], gap: [-11.2, -8.8] }, // North-West <-> Far North-West
+  { axis: 'z', at: -11, range: [-6, 6],   gap: [-1.5, 1.5] },   // North Gallery <-> Far North
+  { axis: 'z', at: -11, range: [6, 14],   gap: [8.8, 11.2] },   // North-East <-> Far North-East
+  { axis: 'z', at: -5, range: [-14, -6], gap: [-11.2, -8.8] },  // West Gallery <-> North-West
+  { axis: 'z', at: -5, range: [-6, 6],   gap: [-1.5, 1.5] },    // Hall <-> North Gallery
+  { axis: 'z', at: -5, range: [6, 14],   gap: [8.8, 11.2] },    // East Gallery <-> North-East
+  { axis: 'z', at: 5,  range: [-14, -6], gap: [-11.2, -8.8] },  // West Gallery <-> South-West
+  { axis: 'z', at: 5,  range: [-6, 6],   gap: [-1.5, 1.5] },    // Hall <-> South Gallery
+  { axis: 'z', at: 5,  range: [6, 14],   gap: [8.8, 11.2] },    // East Gallery <-> South-East
+  { axis: 'z', at: 11, range: [-14, -6], gap: [-11.2, -8.8] },  // South-West <-> Far South-West
+  { axis: 'z', at: 11, range: [-6, 6],   gap: [-1.5, 1.5] },    // South Gallery <-> Far South
+  { axis: 'z', at: 11, range: [6, 14],   gap: [8.8, 11.2] },    // South-East <-> Far South-East
 ];
 
 const collisionSegments = []; // {x1,z1,x2,z2}
@@ -381,7 +416,11 @@ for (const seg of wallSegments) {
       const room = avail - used - gapNeed - FRAME_PAD;
       if (w > room) {                     // too wide: shrink to fit, or stop
         const s = room / w;
-        if (s < MIN_SCALE) break;
+        // a wall with nothing on it yet must still get something, even if
+        // that means shrinking well past MIN_SCALE — only a wall that
+        // already has a picture is allowed to stop here instead.
+        const floor = row.length ? MIN_SCALE : 0.3;
+        if (s < floor) break;
         w *= s; h *= s;
       }
       row.push({ img, w, h });
@@ -575,6 +614,28 @@ function onTap(x, y) {
   if (hits.length) startZoom(hits[0].object);
 }
 
+/* ---- background music: toggle with the corner icon or the M key ---- */
+const bgm = document.getElementById('bgmusic');
+const musicBtn = document.getElementById('music-btn');
+bgm.volume = 0.5;
+let musicOn = true;           // user's intent; playback starts on first interaction (browser autoplay rules)
+function syncMusic() {
+  musicBtn.classList.toggle('off', !musicOn);
+  if (musicOn) { bgm.play().catch(() => {}); } else { bgm.pause(); }
+}
+function toggleMusic() { musicOn = !musicOn; syncMusic(); }
+musicBtn.addEventListener('click', (e) => { e.stopPropagation(); toggleMusic(); });
+musicBtn.addEventListener('pointerdown', (e) => e.stopPropagation());
+// try immediately; if blocked, start on the first click/tap/key
+bgm.play().catch(() => {});
+const startMusicOnce = (e) => {
+  if (e && e.target === musicBtn || (e && musicBtn.contains(e.target))) return;
+  if (musicOn) bgm.play().catch(() => {});
+  ['pointerdown', 'keydown'].forEach(t => document.removeEventListener(t, startMusicOnce, true));
+};
+['pointerdown', 'keydown'].forEach(t => document.addEventListener(t, startMusicOnce, true));
+document.addEventListener('keydown', (e) => { if (e.code === 'KeyM' && !e.repeat) toggleMusic(); });
+
 const keys = {};
 document.addEventListener('keydown', (e) => { keys[e.code] = true; });
 document.addEventListener('keyup', (e) => { keys[e.code] = false; });
@@ -653,7 +714,6 @@ function startZoom(art) {
   animT = 0; animClock = 0;
 
   caption.querySelector('.t').textContent = art.userData.title;
-  caption.querySelector('.s').textContent = 'Sponsored by Kurono Research Institute';
 }
 
 function endZoom() {
